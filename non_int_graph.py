@@ -215,6 +215,8 @@ class cust_memoize_no_length:
 @cust_memoize
 def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_edge):
     # print([(k[0].name, k[1].name) for k in boundary.keys()]) if debug else ""
+    if len(face_list) < 10:
+        pass
     print(boundary) if debug else ""
     print(boundary_labels) if debug else ""
     for i in range(len(boundary) - 1):
@@ -266,13 +268,17 @@ def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_e
             new_loc.append(named_edge)
     # Make sure new_loc follows the order of boundary:
     swapped = len(boundary) > 0 and len(new_loc) > 0 and \
-              (index > 0 and len(set(new_loc[0]).intersection(set(boundary[index - 1]))) == 0 or len(
-                  set(new_loc[-1]).intersection(set(boundary[index]))) == 0)
+              (len(boundary) > index > 0 and (len(set(new_loc[0]).intersection(set(boundary[index - 1]))) == 0 or len(
+                  set(new_loc[-1]).intersection(set(boundary[index])))) == 0)
     if swapped:  # need to find where to start the new locations
         start_ind = -1
         for i in range(len(new_loc)):
             if len(set(new_loc[i]).intersection(set(boundary[index - 1]))) > 0:
                 start_ind = i
+                if len(set(new_loc[i]).intersection(set(boundary[index - 1]))) == 1 and len(
+                  set(new_loc[(i-1) % len(new_loc)]).intersection(set(boundary[index]))) == 1:
+                    print("Found good rotation: " + str(new_loc)) if debug else ""
+                    break
         new_loc = [new_loc[(x + start_ind) % len(new_loc)] for x in range(len(new_loc))]
     labels = reversed(labels)
     labels = tuple(labels)
@@ -557,10 +563,17 @@ def order_faces(graph, positions):
                 found = True
                 to_rem.append(f_name)
                 verts_to_clean = verts_to_clean.union(set(f)).difference(points_to_keep)
+        print("Removing: " + str(to_rem))
         for f_name in to_rem:
             face_dict.pop(f_name)
         if not found:
             break
+    # mat = nx.adjacency_matrix(graph, nodelist=sorted(graph.nodes)).toarray()
+    # for row in mat:
+    #     for x in row:
+    #         print(str(x)+', ', end='')
+    #     print()
+    # exit()
 
     # Then sort faces by lexicographic y coordinates
     face_list = sorted(face_dict.values(), key=lambda face: sorted([positions[x][1] for x in face]))
