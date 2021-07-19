@@ -1,5 +1,6 @@
 import collections
 # import modulefinder
+import math
 
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -197,6 +198,8 @@ class cust_memoize_no_length:
         self.memo = {}
 
     def __call__(self, boundary, boundary_labels, face_list, cur_length, exit_edge):
+        if math.floor(time.time() * 100000) % 10000 == 1111:  # Stop randomly about 1/10000 times
+            print("Have processed {0} entries so far.".format(len(self.memo)))
         args = ''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list))
         print(args) if debug else ""
         if args not in self.memo:
@@ -212,11 +215,11 @@ class cust_memoize_no_length:
 # face_list - A list of the faces left to step over. Only the length is memoized
 # cur_length - Not always memoized, the current length of the path
 # exit_edge - Not memoized, the edge of the dual to exit on
-@cust_memoize
+@cust_memoize_no_length
 def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_edge):
     # print([(k[0].name, k[1].name) for k in boundary.keys()]) if debug else ""
-    if len(face_list) < 10:
-        pass
+    # if len(face_list) < 10:
+    #     pass
     print(boundary) if debug else ""
     print(boundary_labels) if debug else ""
     for i in range(len(boundary) - 1):
@@ -415,7 +418,7 @@ def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_e
 def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     df = gpd.read_file(adj_file)
     np_df = df.to_numpy()
-    print(np_df)
+    # print(np_df)
     g_data = collections.defaultdict(list)
     for i in range(len(np_df)):
         g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
@@ -426,7 +429,7 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
                 to_remove.append(v)
         if len(to_remove) == 0:
             break
-        print(to_remove)
+        # print(to_remove)
         for v in to_remove:
             g_data[g_data[v][0]].remove(v)
             g_data.pop(v)
@@ -434,7 +437,7 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     loc_df['centroid_column'] = loc_df.centroid
     centers = loc_df.set_geometry('centroid_column')
     # centers.set_index('OBJECTID', inplace=True)
-    print(centers)
+    # print(centers)
     h = nx.DiGraph(incoming_graph_data=g_data)
     positions = nx.planar_layout(h)
     g = nx.PlanarEmbedding()
@@ -470,9 +473,9 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
         #                   centers.loc[v]['centroid_column'].y]).flatten()
         vect2 = np.array(positions[v])
         new_neighb = sorted(neighbs, key=lambda x: pseudoangle(x, vect2), reverse=True)
-        print("{0}: {1}".format(v, new_neighb))
+        # print("{0}: {1}".format(v, new_neighb))
         oriented_g_data[v] = new_neighb
-    print(oriented_g_data)
+    # print(oriented_g_data)
     g.set_data(oriented_g_data)
     # positions = {x: [centers.loc[x]['centroid_column'].x, centers.loc[x]['centroid_column'].y] for x in g.nodes}
     # positions = nx.combinatorial_embedding_to_pos()
@@ -769,7 +772,7 @@ def test():
         count_non_int_paths.memo = {}
 
 
-test()
+# test()
 enumerate_paths("data/exp2627neighb.dbf", "/home/daniel/PycharmProjects/GerryMand/data/exp2627wards.shp")
 exit(0)
 
