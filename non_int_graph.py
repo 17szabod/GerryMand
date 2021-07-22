@@ -198,7 +198,7 @@ class cust_memoize_no_length:
         self.memo = {}
 
     def __call__(self, boundary, boundary_labels, face_list, cur_length, exit_edge):
-        if math.floor(time.time() * 100000) % 10000 == 1111:  # Stop randomly about 1/10000 times
+        if math.floor(time.time() * 10000000) % 100000 == 11111:  # Stop randomly about 1/10000 times
             print("Have processed {0} entries so far.".format(len(self.memo)))
         args = ''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list))
         print(args) if debug else ""
@@ -224,8 +224,8 @@ def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_e
     print(boundary_labels) if debug else ""
     for i in range(len(boundary) - 1):
         if len(set(boundary[i]).intersection(set(boundary[i + 1]))) != 1:
-            pass
-            # raise Exception("Boundary is not contiguous")
+            # pass
+            raise Exception("Boundary is not contiguous")
     # if cur_length > 3*(size-1):
     #     return 0
     # if cur_length + np.floor(len(face_list)/(size-1)) > 3*(size-1):
@@ -272,7 +272,7 @@ def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_e
     # Make sure new_loc follows the order of boundary:
     swapped = len(boundary) > 0 and len(new_loc) > 0 and \
               (len(boundary) > index > 0 and (len(set(new_loc[0]).intersection(set(boundary[index - 1]))) == 0 or len(
-                  set(new_loc[-1]).intersection(set(boundary[index])))) == 0)
+                  set(new_loc[-1]).intersection(set(boundary[index]))) == 0))
     if swapped:  # need to find where to start the new locations
         start_ind = -1
         for i in range(len(new_loc)):
@@ -301,13 +301,14 @@ def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_e
             boundary_labels1 = boundary_labels1[:index + offset] + [0] + boundary_labels1[index + offset:]
             offset += 1
         total_count += count_non_int_paths(boundary1, boundary_labels1, copy.deepcopy(face_list), cur_length, exit_edge)
-        for loc1, loc2 in itertools.combinations(new_loc, 2):  # itertools.combinations preserves order!
+        for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # itertools.combinations preserves order!
             boundary1 = copy.deepcopy(boundary)
             boundary_labels1 = copy.deepcopy(boundary_labels)
-            boundary1 = boundary1[:index] + [loc1] + boundary1[index:]
-            boundary_labels1 = boundary_labels1[:index] + [3] + boundary_labels1[index:]
-            boundary1 = boundary1[:index + 1] + [loc2] + boundary1[index + 1:]
-            boundary_labels1 = boundary_labels1[:index + 1] + [2] + boundary_labels1[index + 1:]
+            offset = 0
+            for i in range(len(new_loc)):
+                boundary1 = boundary1[:index+offset] + [new_loc[i]] + boundary1[index + offset:]
+                boundary_labels1 = boundary_labels1[:index+offset] + [3 if i==ind1 else 2 if i==ind2 else 0] + boundary_labels1[index+offset:]
+                offset += 1
             total_count += count_non_int_paths(boundary1, boundary_labels1, copy.deepcopy(face_list), cur_length + 2,
                                                exit_edge)
         del boundary
@@ -422,6 +423,20 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     g_data = collections.defaultdict(list)
     for i in range(len(np_df)):
         g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
+    loc_df = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
+    loc_df['centroid_column'] = loc_df.centroid
+    centers = loc_df.set_geometry('centroid_column')
+    # centers.set_index('OBJECTID', inplace=True)
+    # print(centers)
+    h = nx.DiGraph(incoming_graph_data=g_data)
+    exit_edge = (71, 74)
+    start_edge = (46, 48)
+    y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
+    stddev = np.std(np.asanyarray(list(y_locs.values())))
+    center = np.mean(np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
+    new_verts = [x for x in h.nodes if math.fabs(y_locs[x]-center) < stddev/2.25]
+    h2 = h.subgraph(new_verts).copy()
+    g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
     while True:
         to_remove = []
         for v, neighbs in g_data.items():
@@ -429,16 +444,10 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
                 to_remove.append(v)
         if len(to_remove) == 0:
             break
-        # print(to_remove)
+        print(to_remove)
         for v in to_remove:
-            g_data[g_data[v][0]].remove(v)
+            g_data[g_data[v][0]].remove(v) if len(g_data[v]) > 0 else ""
             g_data.pop(v)
-    loc_df = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
-    loc_df['centroid_column'] = loc_df.centroid
-    centers = loc_df.set_geometry('centroid_column')
-    # centers.set_index('OBJECTID', inplace=True)
-    # print(centers)
-    h = nx.DiGraph(incoming_graph_data=g_data)
     positions = nx.planar_layout(h)
     g = nx.PlanarEmbedding()
 
@@ -475,9 +484,10 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
         new_neighb = sorted(neighbs, key=lambda x: pseudoangle(x, vect2), reverse=True)
         # print("{0}: {1}".format(v, new_neighb))
         oriented_g_data[v] = new_neighb
-    # print(oriented_g_data)
+    print(oriented_g_data)
     g.set_data(oriented_g_data)
-    # positions = {x: [centers.loc[x]['centroid_column'].x, centers.loc[x]['centroid_column'].y] for x in g.nodes}
+
+    # exit(0)
     # positions = nx.combinatorial_embedding_to_pos()
     success, counterexample = nx.check_planarity(g, counterexample=True)
     if not success:
@@ -513,8 +523,9 @@ def order_faces(graph, positions):
     start_boundary_list = []
     start_boundary_labels = []
     for i in range(len(outer_face)):
-        edge = tuple(sorted([outer_face[i], outer_face[(i + 1) % len(outer_face)]]))
-        if edge == exit_edge:
+        # edge = tuple(sorted([outer_face[i], outer_face[(i + 1) % len(outer_face)]]))
+        edge = (outer_face[i], outer_face[(i + 1) % len(outer_face)])
+        if edge == exit_edge or edge == (exit_edge[1], exit_edge[0]):
             continue
         start_boundary_list.append(edge)
         start_boundary_labels.append(1 if edge == start_edge else 0)
@@ -571,15 +582,79 @@ def order_faces(graph, positions):
             face_dict.pop(f_name)
         if not found:
             break
+    # Code to print out adjacency matrix for online viewer:
     # mat = nx.adjacency_matrix(graph, nodelist=sorted(graph.nodes)).toarray()
     # for row in mat:
     #     for x in row:
-    #         print(str(x)+', ', end='')
+    #         print(str(int(x/2))+', ', end='')
     #     print()
     # exit()
 
     # Then sort faces by lexicographic y coordinates
-    face_list = sorted(face_dict.values(), key=lambda face: sorted([positions[x][1] for x in face]))
+    # face_list = sorted(face_dict.values(), key=lambda face: sorted([positions[x][0] for x in face]))
+    # face_list = sorted(face_dict.values(), key=lambda face: np.mean([positions[x][0] for x in face]))
+    # Ensure that face_list results in a continuous boundary
+    face_list = []
+    cur_edge_index = start_boundary_list.index(start_edge)
+    cur_edge_index = start_boundary_list.index((start_edge[1], start_edge[0])) if cur_edge_index == -1 else cur_edge_index
+    cur_boundary = copy.deepcopy(start_boundary_list)
+    while len(cur_boundary) > 1:
+        cur_edge = cur_boundary[cur_edge_index]
+        face = graph.traverse_face(cur_edge[1], cur_edge[0])
+        flat_boundary = np.asanyarray(cur_boundary).flatten()
+        # Check if frontier still simple:
+        inds = []
+        for vertex in face:
+            ind_list = np.where(flat_boundary == vertex)[0]
+            if len(ind_list) > 0:
+                inds.append(np.floor(ind_list[0]/2))
+            # try:
+            #     ind = np.floor(flat_boundary.index(vertex)/2)
+            #     inds.append(ind)
+            # except ValueError:
+            #     pass
+        cont = False
+        inds = sorted(inds)
+        for i in range(len(inds)-1):
+            if inds[i+1]-inds[i] > 1:  # Bad face! Go to next? edge
+                cur_edge_index = (cur_edge_index + 2) % len(cur_boundary)
+                cont = True
+        if cont:
+            continue
+        # Face is good! Add to boundary
+        # stores the new vertices that will be added to the boundary
+        new_loc = []
+        # stores the index all face elements will be put to
+        index = len(cur_boundary)
+        for i in range(len(face)):
+            edge = (face[((i + 1) % len(face))], face[i])  # We know it'll be reversed!
+            # named_edge = tuple(sorted(edge))
+            if edge in cur_boundary:
+                cur_index = cur_boundary.index(edge)
+                cur_boundary.pop(cur_index)
+                if cur_index < index:
+                    index = cur_index
+            else:
+                new_loc.append((edge[1], edge[0]))
+        # Make sure new_loc follows the order of boundary:
+        swapped = len(cur_boundary) > 0 and len(new_loc) > 0 and \
+                  (len(cur_boundary) > index > 0 and (
+                              len(set(new_loc[0]).intersection(set(cur_boundary[index - 1]))) == 0 or len(
+                          set(new_loc[-1]).intersection(set(cur_boundary[index])))) == 0)
+        if swapped:  # need to find where to start the new locations
+            start_ind = -1
+            for i in range(len(new_loc)):
+                if len(set(new_loc[i]).intersection(set(cur_boundary[index - 1]))) > 0:
+                    start_ind = i
+                    if len(set(new_loc[i]).intersection(set(cur_boundary[index - 1]))) == 1 and len(
+                            set(new_loc[(i - 1) % len(new_loc)]).intersection(set(cur_boundary[index]))) == 1:
+                        print("Found good rotation: " + str(new_loc)) if debug else ""
+                        break
+            new_loc = [new_loc[(x + start_ind) % len(new_loc)] for x in range(len(new_loc))]
+        cur_boundary = cur_boundary[:index] + new_loc + cur_boundary[index:]
+        face = ensure_ccw(face, positions)
+        face_list.append(face)
+    start_boundary_list = [tuple(sorted(x)) for x in start_boundary_list]
     print(face_list)
     return count_non_int_paths(start_boundary_list, start_boundary_labels, face_list, 0, exit_edge)
 
@@ -756,7 +831,7 @@ def test():
         # print("Count for size {0} is {1}".format(size, count_non_int_paths(start_boundary, ('0.0',), dims, 0)))
         # print(str(size) + ": " + str(var))
         # print("Duration: " + str(time.time() - start))
-        # assert var == correct_vals[size] if size < len(correct_vals) else ""
+        assert var == correct_vals[size] if size < len(correct_vals) else ""
         intermediate_counts = np.zeros(size - 1)
         intermediate_counts2 = np.zeros(size - 1)
         for key, val in count_non_int_paths.memo.items():
@@ -773,7 +848,7 @@ def test():
 
 
 # test()
-enumerate_paths("data/exp2627neighb.dbf", "/home/daniel/PycharmProjects/GerryMand/data/exp2627wards.shp")
+enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
 exit(0)
 
 size = 4
