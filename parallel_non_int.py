@@ -10,6 +10,7 @@ import geopandas as gpd
 import copy
 import time
 import itertools
+from multiprocessing import Manager, Process
 
 # modulefinder.AddPackagePath()
 # import adjacency_graphs
@@ -184,8 +185,6 @@ class cust_memoize:
         self.memo = {}
 
     def __call__(self, boundary, boundary_labels, face_list, cur_length, exit_edge):
-        if math.floor(time.time() * 1000000) % 10000 == 0:  # Stop randomly about 1/10000 times
-            print("Have processed {0} entries so far.".format(len(self.memo)))
         args = ''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list)) + "." + str(cur_length)
         print(args) if debug else ""
         if args not in self.memo:
@@ -194,18 +193,30 @@ class cust_memoize:
         return self.memo[args]
 
 
+def proc_helper(memo, argstring, fn, args):
+    memo[argstring] = fn(*args)
+
+
+job_manager = Manager()
+job_list = job_manager.list()
+
+
 class cust_memoize_no_length:
     def __init__(self, fn):
         self.fn = fn
-        self.memo = {}
+        memo_manager = Manager()
+        self.memo = memo_manager.dict()
 
     def __call__(self, boundary, boundary_labels, face_list, cur_length, exit_edge):
-        if math.floor(time.time() * 1000000) % 10000 == 0:  # Stop randomly about 1/10000 times
+        if math.floor(time.time() * 10000000) % 100000 == 11111:  # Stop randomly about 1/10000 times
             print("Have processed {0} entries so far.".format(len(self.memo)))
         args = ''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list))
         print(args) if debug else ""
         if args not in self.memo:
-            self.memo[args] = self.fn(boundary, boundary_labels, face_list, cur_length, exit_edge)
+            p = Process(target=proc_helper, args=(self.memo, args, self.fn, (boundary, boundary_labels, face_list, cur_length, exit_edge)))
+            job_list.append(p)
+            p.start()
+            # self.memo[args] = self.fn(boundary, boundary_labels, face_list, cur_length, exit_edge)
         print(self.memo) if debug else ""
         return self.memo[args]
 
@@ -419,7 +430,6 @@ def count_non_int_paths(boundary, boundary_labels, face_list, cur_length, exit_e
 # shapefile - the path to a shp file that contains the local geometry and whatever voter data. For now, this is only
 # used to compute centroids which ensure proper orientation for the planar graph.
 def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
-    print("Start time: " + str(time.time()))
     df = gpd.read_file(adj_file)
     np_df = df.to_numpy()
     # print(np_df)
@@ -660,10 +670,7 @@ def order_faces(graph, positions):
         face_list.append(face)
     start_boundary_list = [tuple(sorted(x)) for x in start_boundary_list]
     print(face_list)
-    print("Finished setup: " + str(time.time()))
-    to_ret = count_non_int_paths(start_boundary_list, start_boundary_labels, face_list, 0, exit_edge)
-    print("Finish time: " + str(time.time()))
-    return to_ret
+    return count_non_int_paths(start_boundary_list, start_boundary_labels, face_list, 0, exit_edge)
 
 
 # def sample(memo_dict, boundary, face_list):
@@ -855,8 +862,9 @@ def test():
 
 
 # test()
-path_count = enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
-print("Found {0} paths".format(path_count))
+enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
+for job in job_list:
+    job.join()
 exit(0)
 
 size = 4
