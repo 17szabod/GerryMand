@@ -594,24 +594,21 @@ def order_faces(graph, positions):
     # exit()
 
     # Then sort faces by lexicographic y coordinates
-    # face_list = sorted(face_dict.values(), key=lambda face: sorted([positions[x][0] for x in face]))
     # face_list = sorted(face_dict.values(), key=lambda face: np.mean([positions[x][0] for x in face]))
     # Ensure that face_list results in a continuous boundary
     face_list = []
     cur_edge_index = start_boundary_list.index(start_edge)
     cur_edge_index = start_boundary_list.index((start_edge[1], start_edge[0])) if cur_edge_index == -1 else cur_edge_index
     cur_boundary = copy.deepcopy(start_boundary_list)
+    pass_counter = 0
+    shortness_param = 0
     while len(cur_boundary) > 1:
         cur_edge = cur_boundary[cur_edge_index]
         face = graph.traverse_face(cur_edge[1], cur_edge[0])
-        # flat_boundary = np.asanyarray(cur_boundary).flatten()
         boundary_verts = [x[0] for x in cur_boundary] + [cur_boundary[-1][1]]
         # Check if frontier still simple:
         inds = []
         for vertex in face:
-            # ind_list = np.where(flat_boundary == vertex)[0]
-            # if len(ind_list) > 0:
-            #     inds.append(np.floor(ind_list[0]/2))
             try:
                 ind = boundary_verts.index(vertex)
                 inds.append(ind)
@@ -623,16 +620,24 @@ def order_faces(graph, positions):
             if inds[i+1]-inds[i] > 1:  # Bad face! Go to next? edge
                 cur_edge_index = (cur_edge_index + 1) % len(cur_boundary)
                 cont = True
+        # Also make sure boundary remains as small as possible
+        if len(inds) - 1 + shortness_param <= len(face) - len(inds) + 1:  # old edges <= new edges
+            if pass_counter < len(cur_boundary):
+                cont = True
+            else:
+                shortness_param += 1
         if cont:
+            pass_counter += 1
             continue
         # Face is good! Add to boundary
+        pass_counter = 0
+        shortness_param = 0
         # stores the new vertices that will be added to the boundary
         new_loc = []
         # stores the index all face elements will be put to
         index = len(cur_boundary)
         for i in range(len(face)):
             edge = (face[((i + 1) % len(face))], face[i])  # We know it'll be reversed!
-            # named_edge = tuple(sorted(edge))
             if edge in cur_boundary:
                 cur_index = cur_boundary.index(edge)
                 cur_boundary.pop(cur_index)
