@@ -99,7 +99,10 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
         # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
         trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
         mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections)) if flattened_sections[j] not in labeled_edges]
-        print("Working on section {0} with length {1}".format(len(cont_sections)-i, len(flattened_sections)))
+        print("Working on section {0} with length {1}".format(len(cont_sections)-i, len(flattened_sections))) if debug else ""
+        print("Current face: " + str(face)) if debug else ""
+        print("New location: " + str(new_loc)) if debug else ""
+        print("Label_inds: " + str(label_inds)) if debug else ""
         for path in cur_dict.keys():
             # Find step type (labels)
             labels = tuple([int(path[x]) for x in label_inds if path[x] != '0'])
@@ -109,22 +112,22 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
             next_path = ''.join([next_path[mapping[x]] for x in range(len(next_path))])
             # Collect all possible consequences of labels to cur_dict
             if len(labels) == 0:
-                path1 = insert_at_indeces(next_path, '0'*len(new_loc), inds_to_add)
+                path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
                 # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
                 cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
                 for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
                     string_to_add = '0' * (ind1 - 1) + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (len(new_loc) - ind2 - 1)
-                    path1 = insert_at_indeces(next_path, string_to_add, inds_to_add)
+                    path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
                     # path1 = next_path[:index] + string_to_add + next_path[index:]
                     cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
             elif len(labels) == 1:
                 for ind1 in range(len(new_loc)):
                     string_to_add = '0' * ind1 + str(labels[0]) + '0' * (len(new_loc) - 1 - ind1)
-                    path1 = insert_at_indeces(next_path, string_to_add, inds_to_add)
+                    path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
                     # path1 = next_path[:index] + string_to_add + next_path[index:]
                     cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
             elif labels in [(1, 2), (2, 1), (1, 3), (3, 1), (2, 2), (3, 3), (2, 3)]:
-                path1 = insert_at_indeces(next_path, '0'*len(new_loc), inds_to_add)
+                path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
                 # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
                 count = 0
                 if labels == (2, 3):  # possible, just combine
@@ -308,7 +311,7 @@ def ensure_ccw(face, positions):
 
 
 # Helper function to insert str2 into str1 at locations given by indices
-def insert_at_indeces(str1, str2, indices):
+def insert_at_indices(str1, str2, indices):
     offset = 0
     out_str = ''
     for k in range(len(str1) + len(str2)):
