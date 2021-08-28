@@ -31,6 +31,7 @@ def count_non_int_paths_w_table(table, edge_dict):
     return table
 
 
+@profile
 def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
     # Loop through reversed cont_sections - keep track of cur_sect and prev_sect
     # Generate and loop through each motzkin path of cur_sect and find connected path in prev_sect
@@ -73,8 +74,8 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
                 cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
         face = face_list[-i+1]
         label_inds = []  # Inds in flattened_sections
-        labeled_edges = []
-        new_loc = []
+        labeled_edges = []  # List of edges that have labels to make seraching later easier
+        new_loc = []  # The list of edges that will be added
         # Find index of step
         flattened_sections = [tuple(sorted(x)) for j in range(len(cur_sect)) for x in cur_sect[j]]
         prev_flattened_sections = [tuple(sorted(x)) for j in range(len(prev_sect)) for x in prev_sect[j]]
@@ -99,13 +100,14 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
         # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
         trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
         mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections)) if flattened_sections[j] not in labeled_edges]
+        mapping = [mapping.index(x) for x in range(len(mapping))]  # need to invert mapping, might be faster to do it above but speed doesnt matter in this part
         print("Working on section {0} with length {1}".format(len(cont_sections)-i, len(flattened_sections))) if debug else ""
         print("Current face: " + str(face)) if debug else ""
         print("New location: " + str(new_loc)) if debug else ""
         print("Label_inds: " + str(label_inds)) if debug else ""
         for path in cur_dict.keys():
             # Find step type (labels)
-            labels = tuple([int(path[x]) for x in label_inds if path[x] != '0'])
+            labels = tuple([path[x] for x in label_inds if path[x] != '0'])
             if len(labels) > 2:  # Too many paths meet, just continue
                 continue
             next_path = ''.join([path[x] for x in range(len(path)) if x not in label_inds])
@@ -116,24 +118,24 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
                 # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
                 cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
                 for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
-                    string_to_add = '0' * (ind1 - 1) + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (len(new_loc) - ind2 - 1)
+                    string_to_add = '0' * ind1 + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (len(new_loc) - ind2 - 1)
                     path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
                     # path1 = next_path[:index] + string_to_add + next_path[index:]
                     cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
             elif len(labels) == 1:
                 for ind1 in range(len(new_loc)):
-                    string_to_add = '0' * ind1 + str(labels[0]) + '0' * (len(new_loc) - 1 - ind1)
+                    string_to_add = '0' * ind1 + labels[0] + '0' * (len(new_loc) - 1 - ind1)
                     path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
                     # path1 = next_path[:index] + string_to_add + next_path[index:]
                     cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
-            elif labels in [(1, 2), (2, 1), (1, 3), (3, 1), (2, 2), (3, 3), (2, 3)]:
+            elif labels in [('1', '2'), ('2', '1'), ('1', '3'), ('3', '1'), ('2', '2'), ('3', '3'), ('2', '3')]:
                 path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
                 # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
                 count = 0
-                if labels == (2, 3):  # possible, just combine
+                if labels == ('2', '3'):  # possible, just combine
                     pass
                 # Need to find partner and change label:
-                elif 3 in labels:  # 2 will be below it
+                elif '3' in labels:  # 2 will be below it
                     for x in range(index, len(path1)):
                         if path1[x] == '3':
                             count += 1
@@ -141,7 +143,7 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
                             if count != 0:
                                 count -= 1
                             else:
-                                path1 = path1[:x] + ('1' if labels != (3, 3) else '3') + path1[x + 1:]
+                                path1 = path1[:x] + ('1' if labels != ('3', '3') else '3') + path1[x + 1:]
                                 break
                 else:
                     for x in range(index, -1, -1):
@@ -151,12 +153,12 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
                             if count != 0:
                                 count -= 1
                             else:
-                                path1 = path1[:x] + ('1' if labels != (2, 2) else '2') + path1[x + 1:]
+                                path1 = path1[:x] + ('1' if labels != ('2', '2') else '2') + path1[x + 1:]
                                 break
                 if count != 0:
                     raise Exception("Failed to match a 3 to a 2 or a 2 to 3.")
                 cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
-            elif labels == (3, 2):
+            elif labels == ('3', '2'):
                 pass  # ?
                 # print("Closed a loop!")
                 # print(''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list)) + "." + str(cur_length))
