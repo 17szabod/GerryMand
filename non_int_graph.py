@@ -152,16 +152,6 @@ def number_faces(graph, dims):
         i_arr = sorted([v[:v.index('.')] for v in face])
         ind = i_arr[0] * dim + j_arr[1]
         face_dict[ind] = face
-    # graph.setup_faces()
-    # for face in graph.faces:
-    #     verts = [sorted(edge, key=lambda x: x.name)[0] for edge in face]
-    #     # verts = (face[0][0], face[0][1], face[1][1], face[2][1])
-    #     j_arr = sorted([v.name[(v.name.index('.') + 1):] for v in verts])
-    #     i_arr = sorted([v.name[:v.name.index('.')] for v in verts])
-    #     # extra = 0 if int(i_arr[2]) == int(i_arr[1]) else 1
-    #     ind = i_arr[0]*dim + j_arr[0]
-    #     # ind = int(sorted([v.name[:v.name.index('.')] for v in verts])[1]) * (dim ** 2) + extra * dim + int(j_arr[1])
-    #     face_dict[ind] = face
     return face_dict
 
 

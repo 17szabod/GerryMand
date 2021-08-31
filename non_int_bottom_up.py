@@ -5,7 +5,7 @@
 # Motzkin paths should be enumerated by putting in either a 0 or a 3 or 2 if 3 is before
 # List of dicts?
 # Only main algorithm is bottom up, rest can be top down
-
+# 33179817984000
 
 import collections
 import copy
@@ -31,7 +31,7 @@ def count_non_int_paths_w_table(table, edge_dict):
     return table
 
 
-@profile
+# @profile
 def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
     # Loop through reversed cont_sections - keep track of cur_sect and prev_sect
     # Generate and loop through each motzkin path of cur_sect and find connected path in prev_sect
@@ -64,13 +64,14 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
                 for one_ind in range(len(section)):
                     first_dict = {}
                     second_dict = {}
-                    find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict)
-                    find_motzkin_paths(0, '', one_ind, second_dict)
-                    my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
+                    for start_depth in range(5):  # will repeat, but repeats are ok
+                        find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict, start_depth)
+                        find_motzkin_paths(0, '', one_ind, second_dict, 4 - start_depth)
+                        my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
                 cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
             else:
                 my_dict = {}
-                find_motzkin_paths(0, '', len(section), my_dict)
+                find_motzkin_paths(0, '', len(section), my_dict, 0)
                 cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
         face = face_list[-i+1]
         label_inds = []  # Inds in flattened_sections
@@ -172,9 +173,155 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
     return list(prev_dict.values())[0]  # There should only be one value at the end
 
 
+def count_non_int_paths_restr_length(face_list, start_edge, outer_boundary, cont_sections, cutoff_length):
+    # Loop through reversed cont_sections - keep track of cur_sect and prev_sect
+    # Generate and loop through each motzkin path of cur_sect and find connected path in prev_sect
+    # Add the values of each of cur_sect path's neighbors from prev_sect to it's value
+    # Store these in prev_dict and cur_dict
+    # prev_dict = cur_dict - manually gc.collect() after?
+    prev_dict = {'1': 1}  # Do we need to store which step it is in these dicts? No!
+    prev_sect = cont_sections[-1]
+    flat_outer = [x[0] for x in outer_boundary] + [outer_boundary[-1][1]]
+    outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
+    start_edge_ind = outer_boundary.index(start_edge)
+    # Keep track of the minimum and maximum lengths to set up for the memoization table
+    max_length = 1
+    min_length = 1
+    for i in range(2, len(cont_sections)+1):  # Range is off because negative values are offset
+        cur_sect = cont_sections[-i]
+        cur_dict = collections.defaultdict()
+        cur_dict[''] = 0
+        # gc.collect()
+        for length in range(min_length, max_length + 2):
+            for section in cur_sect:
+                # Generate all possible motzkin paths for cur_sect
+                # find section that connects to start_edge
+                is_first = False
+                if not (len(cur_sect) == 1 and i > len(outer_boundary)):
+                    start_ind = flat_outer.index(section[0][0]) if section[0][0] in flat_outer else flat_outer.index(
+                        section[0][1])
+                    end_ind = flat_outer.index(section[-1][1]) if section[-1][1] in flat_outer else flat_outer.index(
+                        section[-1][0])
+                    is_first = start_ind <= start_edge_ind <= end_ind
+                is_first = is_first or (len(cur_sect) == 1 and i > len(outer_boundary))
+                if is_first:
+                    my_dict = {}
+                    for one_ind in range(len(section)):
+                        first_dict = {}
+                        second_dict = {}
+                        find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict)
+                        find_motzkin_paths(0, '', one_ind, second_dict)
+                        my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
+                    cur_dict = {str(length) + '.' + s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
+                else:
+                    my_dict = {}
+                    find_motzkin_paths(0, '', len(section), my_dict)
+                    cur_dict = {str(length) + '.' + s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
+        face = face_list[-i+1]
+        label_inds = []  # Inds in flattened_sections
+        labeled_edges = []  # List of edges that have labels to make seraching later easier
+        new_loc = []  # The list of edges that will be added
+        # Find index of step
+        flattened_sections = [tuple(sorted(x)) for j in range(len(cur_sect)) for x in cur_sect[j]]
+        prev_flattened_sections = [tuple(sorted(x)) for j in range(len(prev_sect)) for x in prev_sect[j]]
+        inds_to_add = []  # Keep track of which indices of PREV_flattened_sections we need to add to
+        index = sum([len(cur_sect[j]) for j in range(len(cur_sect))])
+        for j in range(len(face)):
+            edge = (face[j], face[((j + 1) % len(face))])
+            named_edge = tuple(sorted(edge))
+            # edge = (face[((j + 1) % len(face))], face[j])  # We know it'll be reversed!
+            if named_edge in outer_boundary:
+                pass
+            elif named_edge in flattened_sections:
+                labeled_edges.append(named_edge)
+                cur_index = flattened_sections.index(named_edge)
+                label_inds.append(cur_index)
+                if cur_index < index:
+                    index = cur_index
+            else:
+                new_loc.append(named_edge)
+                if named_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
+                    inds_to_add.append(prev_flattened_sections.index(named_edge))
+        # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
+        trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
+        mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections)) if flattened_sections[j] not in labeled_edges]
+        mapping = [mapping.index(x) for x in range(len(mapping))]  # need to invert mapping, might be faster to do it above but speed doesnt matter in this part
+        print("Working on section {0} with length {1}".format(len(cont_sections)-i, len(flattened_sections))) if debug else ""
+        print("Current face: " + str(face)) if debug else ""
+        print("New location: " + str(new_loc)) if debug else ""
+        print("Label_inds: " + str(label_inds)) if debug else ""
+        for path in cur_dict.keys():
+            # Find step type (labels)
+            labels = tuple([path[x] for x in label_inds if path[x] != '0'])
+            if len(labels) > 2:  # Too many paths meet, just continue
+                continue
+            next_path = ''.join([path[x] for x in range(len(path)) if x not in label_inds])
+            next_path = ''.join([next_path[mapping[x]] for x in range(len(next_path))])
+            # Collect all possible consequences of labels to cur_dict
+            if len(labels) == 0:
+                path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
+                cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
+                for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
+                    string_to_add = '0' * ind1 + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (len(new_loc) - ind2 - 1)
+                    path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                    # path1 = next_path[:index] + string_to_add + next_path[index:]
+                    cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
+            elif len(labels) == 1:
+                for ind1 in range(len(new_loc)):
+                    string_to_add = '0' * ind1 + labels[0] + '0' * (len(new_loc) - 1 - ind1)
+                    path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                    # path1 = next_path[:index] + string_to_add + next_path[index:]
+                    cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
+            elif labels in [('1', '2'), ('2', '1'), ('1', '3'), ('3', '1'), ('2', '2'), ('3', '3'), ('2', '3')]:
+                path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
+                count = 0
+                if labels == ('2', '3'):  # possible, just combine
+                    pass
+                # Need to find partner and change label:
+                elif '3' in labels:  # 2 will be below it
+                    for x in range(index, len(path1)):
+                        if path1[x] == '3':
+                            count += 1
+                        if path1[x] == '2':
+                            if count != 0:
+                                count -= 1
+                            else:
+                                path1 = path1[:x] + ('1' if labels != ('3', '3') else '3') + path1[x + 1:]
+                                break
+                else:
+                    for x in range(index, -1, -1):
+                        if path1[x] == '2':
+                            count += 1
+                        if path1[x] == '3':
+                            if count != 0:
+                                count -= 1
+                            else:
+                                path1 = path1[:x] + ('1' if labels != ('2', '2') else '2') + path1[x + 1:]
+                                break
+                if count != 0:
+                    raise Exception("Failed to match a 3 to a 2 or a 2 to 3.")
+                cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
+            elif labels == ('3', '2'):
+                pass  # ?
+                # print("Closed a loop!")
+                # print(''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list)) + "." + str(cur_length))
+                # return 0
+                # We just closed a loop! Currently allowed
+                # raise Exception("Theoretically impossible case occurred, we closed a loop.")
+            else:
+                raise Exception("Invalid labels on step location")
+        prev_dict = cur_dict
+        prev_sect = cur_sect
+    return list(prev_dict.values())[0]  # There should only be one value at the end
+
+
 # https://doi.org/10.1016/j.tcs.2020.12.013
-def find_motzkin_paths(h, w, n, m_dict):
+def find_motzkin_paths(h, w, n, m_dict, depth):
     j = len(w)
+    if depth > 5:
+        return
     if h > n - j:
         return
     if j > n:
@@ -184,9 +331,9 @@ def find_motzkin_paths(h, w, n, m_dict):
         m_dict[w + h * '2'] = 0
         return
     if h > 0:
-        find_motzkin_paths(h - 1, w + '2', n, m_dict)
-    find_motzkin_paths(h, w + '0', n, m_dict)
-    find_motzkin_paths(h + 1, w + '3', n, m_dict)
+        find_motzkin_paths(h - 1, w + '2', n, m_dict, depth)
+    find_motzkin_paths(h, w + '0', n, m_dict, depth)
+    find_motzkin_paths(h + 1, w + '3', n, m_dict, depth+1)
     return
 
 
@@ -348,13 +495,13 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     h = nx.DiGraph(incoming_graph_data=g_data)
     exit_edge = (71, 74)
     start_edge = (46, 48)
-    y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
-    stddev = np.std(np.asanyarray(list(y_locs.values())))
-    center = np.mean(
-        np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
-    new_verts = [x for x in h.nodes if math.fabs(y_locs[x] - center) < stddev / 2.25]
-    h2 = h.subgraph(new_verts).copy()
-    g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
+    # y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
+    # stddev = np.std(np.asanyarray(list(y_locs.values())))
+    # center = np.mean(
+    #     np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
+    # new_verts = [x for x in h.nodes if math.fabs(y_locs[x] - center) < stddev / 2.25]
+    # h2 = h.subgraph(new_verts).copy()
+    # g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
     while True:
         to_remove = []
         for v, neighbs in g_data.items():
@@ -540,9 +687,8 @@ def order_faces(graph, positions):
         inds = sorted(inds)
         for i in range(len(inds) - 1):
             if inds[i + 1] - inds[i] > 1:  # Bad face! Go to next? edge
-                cur_edge_index = (cur_edge_index + 5) % (len(cur_boundary) - 1) if pass_counter < 100 else (
-                                                                                                                   cur_edge_index + 1) % (
-                                                                                                                   len(cur_boundary) - 1)
+                cur_edge_index = (cur_edge_index + 5) % (len(cur_boundary) - 1) if pass_counter < len(outer_face)*20 else \
+                    (cur_edge_index + 1) % (len(cur_boundary) - 1)
                 cont = True
         # Also make sure boundary remains as small as possible
         if len(inds) - 1 + shortness_param <= len(face) - len(inds) + 1:  # old edges <= new edges
@@ -670,8 +816,8 @@ def order_faces(graph, positions):
     for sections in cont_sections:
         sect_mem = 1
         for sect in sections:
-            sect_mem *= m_n[len(sect)]
-        # print("{0}: {1}".format(c, sect_mem))
+            sect_mem *= m_n[len(sect)] if len(sect) < len(m_n) else m_n[-1]
+        print("{0}: {1}: {2}".format(c, '.'.join([str(len(sect)) for sect in sections]), sect_mem))
         c += 1
         total_mem += sect_mem
     print("Will be using approximately {0} entries.".format(total_mem))
@@ -685,6 +831,19 @@ def order_faces(graph, positions):
     return count
 
 
+# 185650586758
+# 614358697
 if __name__ == '__main__':
+    # m_n = [1, 1, 2, 4, 9, 21, 51, 127, 323, 835, 2188, 5798, 15511, 41835, 113634, 310572, 853467, 2356779, 6536382,
+    #        18199284, 50852019, 142547559, 400763223, 1129760415, 3192727797, 9043402501, 25669818476, 73007772802,
+    #        208023278209, 593742784829]
+    # n = 29
+    # d = 5
+    # for d in range(math.ceil(n/2)):
+    #     print("Number of paths w/ depth <= {0}: {1}".format(d, m_n[n] - sum([1/(d2+1) * (math.comb(2*d2, d2) * math.comb(n, 2*d2)) for d2 in range(d, math.floor(n/2)+1)])))
+    # for n in range(10, 30):
+    #     print("Number of paths of length {0} w/ depth <= {1}: {2}".format(n, d, m_n[n] - sum([1/(d2+1) * (math.comb(2*d2, d2) * math.comb(n, 2*d2)) for d2 in range(d, math.floor(n/2)+1)])))
+    # for d in range(math.ceil(n/2)):
+    #     print("Number of paths w/ depth = {0}: {1}".format(d, 1/(d+1) * (math.comb(2*d, d) * math.comb(n, 2*d))))
     enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
-    exit(0)
+    exit()
