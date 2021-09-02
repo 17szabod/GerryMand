@@ -19,6 +19,17 @@ import numpy as np
 import geopandas as gpd
 
 debug = True
+depth_bound = 2
+
+
+# https://stackoverflow.com/questions/10035752/elegant-python-code-for-integer-partitioning
+def partition(number):
+    answer = set()
+    answer.add((number, ))
+    for x in range(1, number):
+        for y in partition(number - x):
+            answer.add((x, ) + y)
+    return answer
 
 
 def count_non_int_paths_w_table(table, edge_dict):
@@ -48,31 +59,37 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
         cur_dict = collections.defaultdict()
         cur_dict[''] = 0
         # gc.collect()
-        for section in cur_sect:
-            # Generate all possible motzkin paths for cur_sect
-            # find section that connects to start_edge
-            is_first = False
-            if not (len(cur_sect) == 1 and i > len(outer_boundary)):
-                start_ind = flat_outer.index(section[0][0]) if section[0][0] in flat_outer else flat_outer.index(
-                    section[0][1])
-                end_ind = flat_outer.index(section[-1][1]) if section[-1][1] in flat_outer else flat_outer.index(
-                    section[-1][0])
-                is_first = start_ind <= start_edge_ind <= end_ind
-            is_first = is_first or (len(cur_sect) == 1 and i > len(outer_boundary))
-            if is_first:
-                my_dict = {}
-                for one_ind in range(len(section)):
-                    first_dict = {}
-                    second_dict = {}
-                    for start_depth in range(5):  # will repeat, but repeats are ok
-                        find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict, start_depth)
-                        find_motzkin_paths(0, '', one_ind, second_dict, 4 - start_depth)
-                        my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
-                cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
-            else:
-                my_dict = {}
-                find_motzkin_paths(0, '', len(section), my_dict, 0)
-                cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
+        for tup in partition(depth_bound):  # Loop through all ordered partitions for the depth bound
+            if len(tup) > len(cur_sect):
+                continue
+            if len(tup) < len(cur_sect):
+                tup += (0, ) * (len(cur_sect) - len(tup))
+            for section_ind in range(len(cur_sect)):
+                section = cur_sect[section_ind]
+                # Generate all possible motzkin paths for cur_sect
+                # find section that connects to start_edge
+                is_first = False
+                if not (len(cur_sect) == 1 and i > len(outer_boundary)):
+                    start_ind = flat_outer.index(section[0][0]) if section[0][0] in flat_outer else flat_outer.index(
+                        section[0][1])
+                    end_ind = flat_outer.index(section[-1][1]) if section[-1][1] in flat_outer else flat_outer.index(
+                        section[-1][0])
+                    is_first = start_ind <= start_edge_ind <= end_ind
+                is_first = is_first or (len(cur_sect) == 1 and i > len(outer_boundary))
+                if is_first:
+                    my_dict = {}
+                    for one_ind in range(len(section)):
+                        for start_depth in range(tup[section_ind]+1):  # will repeat, but repeats are ok
+                            first_dict = {}
+                            second_dict = {}
+                            find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict, depth_bound - start_depth)
+                            find_motzkin_paths(0, '', one_ind, second_dict, depth_bound - (tup[section_ind] - start_depth))
+                            my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
+                    cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
+                else:
+                    my_dict = {}
+                    find_motzkin_paths(0, '', len(section), my_dict, depth_bound - tup[section_ind])
+                    cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
         face = face_list[-i+1]
         label_inds = []  # Inds in flattened_sections
         labeled_edges = []  # List of edges that have labels to make seraching later easier
@@ -320,7 +337,7 @@ def count_non_int_paths_restr_length(face_list, start_edge, outer_boundary, cont
 # https://doi.org/10.1016/j.tcs.2020.12.013
 def find_motzkin_paths(h, w, n, m_dict, depth):
     j = len(w)
-    if depth > 5:
+    if depth > depth_bound:
         return
     if h > n - j:
         return
@@ -816,7 +833,8 @@ def order_faces(graph, positions):
     for sections in cont_sections:
         sect_mem = 1
         for sect in sections:
-            sect_mem *= m_n[len(sect)] if len(sect) < len(m_n) else m_n[-1]
+            # sect_mem *= m_n[len(sect)] if len(sect) < len(m_n) else m_n[-1]
+            sect_mem *= sum([1/(d2+1) * (math.comb(2*d2, d2) * math.comb(len(sect), 2*d2)) for d2 in range(depth_bound+1)])
         print("{0}: {1}: {2}".format(c, '.'.join([str(len(sect)) for sect in sections]), sect_mem))
         c += 1
         total_mem += sect_mem
@@ -838,7 +856,7 @@ if __name__ == '__main__':
     #        18199284, 50852019, 142547559, 400763223, 1129760415, 3192727797, 9043402501, 25669818476, 73007772802,
     #        208023278209, 593742784829]
     # n = 29
-    # d = 5
+    # d = depth_bound
     # for d in range(math.ceil(n/2)):
     #     print("Number of paths w/ depth <= {0}: {1}".format(d, m_n[n] - sum([1/(d2+1) * (math.comb(2*d2, d2) * math.comb(n, 2*d2)) for d2 in range(d, math.floor(n/2)+1)])))
     # for n in range(10, 30):
@@ -846,4 +864,7 @@ if __name__ == '__main__':
     # for d in range(math.ceil(n/2)):
     #     print("Number of paths w/ depth = {0}: {1}".format(d, 1/(d+1) * (math.comb(2*d, d) * math.comb(n, 2*d))))
     enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
+    # out_dict = {}
+    # find_motzkin_paths(0, '', 6, out_dict, 2)
+    # print(out_dict)
     exit()
