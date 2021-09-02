@@ -5,7 +5,6 @@
 # Motzkin paths should be enumerated by putting in either a 0 or a 3 or 2 if 3 is before
 # List of dicts?
 # Only main algorithm is bottom up, rest can be top down
-# 33179817984000
 
 import collections
 import copy
@@ -23,11 +22,13 @@ depth_bound = 2
 
 
 # https://stackoverflow.com/questions/10035752/elegant-python-code-for-integer-partitioning
-def partition(number):
+def partition(number, p_count):
     answer = set()
-    answer.add((number, ))
-    for x in range(1, number):
-        for y in partition(number - x):
+    if p_count == 1:
+        answer.add((number, ))
+        return answer
+    for x in range(0, number + 1):
+        for y in partition(number - x, p_count - 1):
             answer.add((x, ) + y)
     return answer
 
@@ -57,13 +58,15 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
     for i in range(2, len(cont_sections)+1):  # Range is off because negative values are offset
         cur_sect = cont_sections[-i]
         cur_dict = collections.defaultdict()
-        cur_dict[''] = 0
+        # cur_dict[''] = 0
         # gc.collect()
-        for tup in partition(depth_bound):  # Loop through all ordered partitions for the depth bound
-            if len(tup) > len(cur_sect):
-                continue
-            if len(tup) < len(cur_sect):
-                tup += (0, ) * (len(cur_sect) - len(tup))
+        for tup in partition(depth_bound, len(cur_sect)):  # Loop through all ordered partitions for the depth bound
+            temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
+            temp_dict[''] = 0
+            # if len(tup) > len(cur_sect):
+            #     continue
+            # if len(tup) < len(cur_sect):
+            #     tup += (0, ) * (len(cur_sect) - len(tup))
             for section_ind in range(len(cur_sect)):
                 section = cur_sect[section_ind]
                 # Generate all possible motzkin paths for cur_sect
@@ -85,11 +88,12 @@ def count_non_int_paths(face_list, start_edge, outer_boundary, cont_sections):
                             find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict, depth_bound - start_depth)
                             find_motzkin_paths(0, '', one_ind, second_dict, depth_bound - (tup[section_ind] - start_depth))
                             my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
-                    cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
+                    temp_dict = {s1 + s2: 0 for s1 in temp_dict.keys() for s2 in my_dict.keys()}
                 else:
                     my_dict = {}
                     find_motzkin_paths(0, '', len(section), my_dict, depth_bound - tup[section_ind])
-                    cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
+                    temp_dict = {s1 + s2: 0 for s1 in temp_dict.keys() for s2 in my_dict.keys()}
+            cur_dict.update(temp_dict)
         face = face_list[-i+1]
         label_inds = []  # Inds in flattened_sections
         labeled_edges = []  # List of edges that have labels to make seraching later easier
@@ -512,13 +516,13 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     h = nx.DiGraph(incoming_graph_data=g_data)
     exit_edge = (71, 74)
     start_edge = (46, 48)
-    # y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
-    # stddev = np.std(np.asanyarray(list(y_locs.values())))
-    # center = np.mean(
-    #     np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
-    # new_verts = [x for x in h.nodes if math.fabs(y_locs[x] - center) < stddev / 2.25]
-    # h2 = h.subgraph(new_verts).copy()
-    # g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
+    y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
+    stddev = np.std(np.asanyarray(list(y_locs.values())))
+    center = np.mean(
+        np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
+    new_verts = [x for x in h.nodes if math.fabs(y_locs[x] - center) < stddev / 2.25]
+    h2 = h.subgraph(new_verts).copy()
+    g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
     while True:
         to_remove = []
         for v, neighbs in g_data.items():
