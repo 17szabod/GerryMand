@@ -849,67 +849,68 @@ def test():
         count_non_int_paths.memo = {}
 
 
-# test()
-path_count = enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
-print("Found {0} paths".format(path_count))
-exit(0)
+if __name__ == '__main__':
+    # test()
+    path_count = enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
+    print("Found {0} paths".format(path_count))
+    exit(0)
 
-size = 4
-# These are useless, but compiler needs help
-zeros_due_to_smart_length = 0
-zeros_due_to_length = 0
+    size = 4
+    # These are useless, but compiler needs help
+    zeros_due_to_smart_length = 0
+    zeros_due_to_length = 0
 
-grid = setup_grid(size, size)
-grid_graph = nx.PlanarEmbedding()
-grid_data = {v.name: [n.name for n in reversed(v.neighbors)] for v in grid.vertices}
-# grid_data['1.0'].remove('1.1')
-# grid_data['1.1'].remove('1.0')
-grid_data['0.0'] = grid_data['0.0'][:1] + ['1.1'] + grid_data['0.0'][1:]
-grid_data['1.1'] = grid_data['1.1'][:3] + ['0.0'] + grid_data['1.1'][3:]
-print(grid_data)
-grid_graph.set_data(grid_data)
-plt.subplot(111)
-nx.draw(grid_graph)
-plt.show()
+    grid = setup_grid(size, size)
+    grid_graph = nx.PlanarEmbedding()
+    grid_data = {v.name: [n.name for n in reversed(v.neighbors)] for v in grid.vertices}
+    # grid_data['1.0'].remove('1.1')
+    # grid_data['1.1'].remove('1.0')
+    grid_data['0.0'] = grid_data['0.0'][:1] + ['1.1'] + grid_data['0.0'][1:]
+    grid_data['1.1'] = grid_data['1.1'][:3] + ['0.0'] + grid_data['1.1'][3:]
+    print(grid_data)
+    grid_graph.set_data(grid_data)
+    plt.subplot(111)
+    nx.draw(grid_graph)
+    plt.show()
 
-# A note on grid dimensions: in a 5x5 grid, we will say there are 4x4 squares.
-# First try a 5x5 grid example:
-face_dict = number_faces(grid_graph, (size, size))
-face_list = [face_dict[k] for k in sorted(face_dict.keys())]
-# print([[[v.name for v in e] for e in f] for f in face_list])
-# start_edge_names = [('0.' + str(i), '0.' + str(i + 1)) for i in range(size) if i != size - 1]
-# # start_edges = [tuple(sorted((edge[0].name, edge[1].name))) for edge in grid.edges if
-# #                (edge[0].name, edge[1].name) in start_edge_names or (edge[1].name, edge[0].name) in start_edge_names]
-# start_boundary = {
-#     edge: 1 if (edge[0], edge[1]) == ('0.0', '0.1') or (edge[0], edge[1]) == ('0.1', '0.0') else 0
-#     for edge in start_edge_names}
-exit_edge = (str(size - 1) + '.' + str(size - 2), str(size - 1) + '.' + str(size - 1))
-outer_face = max([grid_graph.traverse_face(*exit_edge), grid_graph.traverse_face(exit_edge[1], exit_edge[0])],
-                 key=lambda x: len(x))
-start_boundary_list = []
-start_boundary_labels = []
-for i in range(len(outer_face)):
-    edge = tuple(sorted([outer_face[i], outer_face[(i + 1) % len(outer_face)]]))
-    if edge == exit_edge:
-        continue
-    start_boundary_list.append(edge)
-    start_boundary_labels.append(1 if edge == ('0.0', '0.1') else 0)
-# add weird faces to face_list
-face_list = [['0.0', '1.1', '0.1']] + face_list
-print(face_list)
-print(count_non_int_paths(start_boundary_list, start_boundary_labels, face_list, 0, exit_edge))
-print(count_non_int_paths.memo)
-# start_boundary = {'0.0': 0, '0.1': 0, '0.2': 0, '0.3': 0, '0.4': 0, '0.5': 0, '0.6': 0, '0.7': 0, '0.8': 1}
-# for size in [11, 12]:
-#     dims = (size, size)
-#     start_boundary = {}
-#     for i in range(size):
-#         start_boundary['0.' + str(i)] = 0 if i != size-1 else 1
-#     start = time.time()
-#     print("Count for size {0} is {1}".format(size, count_non_int_paths(start_boundary, ('0.0',), dims, 0)))
-#     print("Duration: " + str(time.time() - start))
+    # A note on grid dimensions: in a 5x5 grid, we will say there are 4x4 squares.
+    # First try a 5x5 grid example:
+    face_dict = number_faces(grid_graph, (size, size))
+    face_list = [face_dict[k] for k in sorted(face_dict.keys())]
+    # print([[[v.name for v in e] for e in f] for f in face_list])
+    # start_edge_names = [('0.' + str(i), '0.' + str(i + 1)) for i in range(size) if i != size - 1]
+    # # start_edges = [tuple(sorted((edge[0].name, edge[1].name))) for edge in grid.edges if
+    # #                (edge[0].name, edge[1].name) in start_edge_names or (edge[1].name, edge[0].name) in start_edge_names]
+    # start_boundary = {
+    #     edge: 1 if (edge[0], edge[1]) == ('0.0', '0.1') or (edge[0], edge[1]) == ('0.1', '0.0') else 0
+    #     for edge in start_edge_names}
+    exit_edge = (str(size - 1) + '.' + str(size - 2), str(size - 1) + '.' + str(size - 1))
+    outer_face = max([grid_graph.traverse_face(*exit_edge), grid_graph.traverse_face(exit_edge[1], exit_edge[0])],
+                     key=lambda x: len(x))
+    start_boundary_list = []
+    start_boundary_labels = []
+    for i in range(len(outer_face)):
+        edge = tuple(sorted([outer_face[i], outer_face[(i + 1) % len(outer_face)]]))
+        if edge == exit_edge:
+            continue
+        start_boundary_list.append(edge)
+        start_boundary_labels.append(1 if edge == ('0.0', '0.1') else 0)
+    # add weird faces to face_list
+    face_list = [['0.0', '1.1', '0.1']] + face_list
+    print(face_list)
+    print(count_non_int_paths(start_boundary_list, start_boundary_labels, face_list, 0, exit_edge))
+    print(count_non_int_paths.memo)
+    # start_boundary = {'0.0': 0, '0.1': 0, '0.2': 0, '0.3': 0, '0.4': 0, '0.5': 0, '0.6': 0, '0.7': 0, '0.8': 1}
+    # for size in [11, 12]:
+    #     dims = (size, size)
+    #     start_boundary = {}
+    #     for i in range(size):
+    #         start_boundary['0.' + str(i)] = 0 if i != size-1 else 1
+    #     start = time.time()
+    #     print("Count for size {0} is {1}".format(size, count_non_int_paths(start_boundary, ('0.0',), dims, 0)))
+    #     print("Duration: " + str(time.time() - start))
 
 
-# print(count_non_int_paths({'0.0': 1, '0.1': 0, '0.2': 0, '0.3': 0, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 1, '0.2': 0, '0.3': 0, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 0, '0.2': 1, '0.3': 0, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 0, '0.2': 0, '0.3': 1, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 0, '0.2': 0, '0.3': 0, '0.4': 1}, ('0.0',), (5, 5), 0))
-# grid = setup_grid(2, 2)
-# print(count_non_int_paths({'0.0': 1, '0.1': 0}, ('0.0', ), (2, 2), 0))
+    # print(count_non_int_paths({'0.0': 1, '0.1': 0, '0.2': 0, '0.3': 0, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 1, '0.2': 0, '0.3': 0, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 0, '0.2': 1, '0.3': 0, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 0, '0.2': 0, '0.3': 1, '0.4': 0}, ('0.0',), (5, 5), 0) + count_non_int_paths({'0.0': 0, '0.1': 0, '0.2': 0, '0.3': 0, '0.4': 1}, ('0.0',), (5, 5), 0))
+    # grid = setup_grid(2, 2)
+    # print(count_non_int_paths({'0.0': 1, '0.1': 0}, ('0.0', ), (2, 2), 0))
