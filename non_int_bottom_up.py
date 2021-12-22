@@ -51,86 +51,24 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
     # prev_dict = cur_dict - manually gc.collect() after?
     # one = '1' if start_edge == (46,48) else '0'
     # exits = {start_edge, exit_edge}
-    rev_exits = {(e[1], e[0]) for e in exits}
-    prev_dict = {'11': 1}  # Do we need to store which step it is in these dicts? No!
+    # rev_exits = {(e[1], e[0]) for e in exits}
+    init_path = ''
+    prev_dict = {init_path: 1}  # Do we need to store which step it is in these dicts? No!
     prev_sect = cont_sections[-1]
     flat_outer = [x[0] for x in outer_boundary] + [outer_boundary[-1][1]]
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
+    k = 2
     # exit_inds = []
-    exit_inds = [(flat_outer.index(e[0]), flat_outer.index(e[1])) for e in exits]
-    # for e in exits:
-        # try:
-        #     exit_inds.append(outer_boundary.index(e if e in outer_boundary else (e[1], e[0])))
-        # except ValueError:
-        #     exit_inds.append(len(flat_outer))
-    # start_edge_ind = outer_boundary.index(start_edge if start_edge in outer_boundary else (start_edge[1], start_edge[0]))
-    # try:
-    #     exit_edge_ind = outer_boundary.index(exit_edge if exit_edge in outer_boundary else (exit_edge[1], exit_edge[0]))
-    # except ValueError:
-    #     exit_edge_ind = len(flat_outer)
+    # exit_inds = [(flat_outer.index(e[0]), flat_outer.index(e[1])) for e in exits]
     num_samples = 1000
-    sample_paths = [['11'] for x in range(num_samples)]  # The sampled path to return
+    sample_paths = [[init_path] for x in range(num_samples)]  # The sampled path to return
     # sample_path = ['1']
-    sample_tree = [{'11': [1, []]}]
+    sample_tree = [{init_path: [1, []]}]
     for i in range(2, len(cont_sections)+1):  # Range is off because negative values are offset
         cur_sect = cont_sections[-i]
         cur_dict = collections.defaultdict()
-        for tup in partition(depth_bound, len(cur_sect)):  # Loop through all ordered partitions for the depth bound
-            temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
-            temp_dict[''] = 0
-            # if len(tup) > len(cur_sect):
-            #     continue
-            # if len(tup) < len(cur_sect):
-            #     tup += (0, ) * (len(cur_sect) - len(tup))
-            for section_ind in range(len(cur_sect)):
-                section = cur_sect[section_ind]
-                # Generate all possible motzkin paths for cur_sect
-                # find section that connects to start_edge
-                # is_first = False
-                # if not (len(cur_sect) == 1 and i > len(outer_boundary)):
-                start_ind = flat_outer.index(section[0][0]) if section[0][0] in flat_outer else flat_outer.index(
-                    section[0][1])
-                end_ind = flat_outer.index(section[-1][1]) if section[-1][1] in flat_outer else flat_outer.index(
-                    section[-1][0])
-                exits_contained = np.asanyarray([start_ind <= min(e_ind) < end_ind for e_ind in exit_inds])
-                exits_rev_contained = np.asanyarray([end_ind < max(e_ind) <= start_ind for e_ind in exit_inds])
-                #  When should we allow ones? When some but not all exits are covered by this section
-                is_first = np.any(exits_contained) and not np.all(exits_contained)
-                # Adding np boolean arrays is same as or
-                is_first = is_first + (np.any(exits_rev_contained) and not np.all(exits_rev_contained))
-                # is_first = start_ind <= start_edge_ind <= end_ind <= exit_edge_ind <= start_ind + len(flat_outer) or \
-                #            end_ind <= exit_edge_ind <= start_ind <= start_edge_ind <= end_ind + len(flat_outer)
-                # is_first = is_first or (len(cur_sect) == 1 and i > len(outer_boundary))
-                if is_first:
-                    my_dict = {}
-                    for one_ind in range(len(section)):
-                        for start_depth in range(tup[section_ind]+1):  # will repeat, but repeats are ok
-                            first_dict = {}
-                            second_dict = {}
-                            find_motzkin_paths(0, '', len(section) - one_ind - 1, first_dict, depth_bound - start_depth)
-                            find_motzkin_paths(0, '', one_ind, second_dict, depth_bound - (tup[section_ind] - start_depth))
-                            my_dict.update({s1 + '1' + s2: 0 for s1 in first_dict.keys() for s2 in second_dict.keys()})
-                    temp_dict = {s1 + s2: 0 for s1 in temp_dict.keys() for s2 in my_dict.keys()}
-                else:
-                    my_dict = {}
-                    find_motzkin_paths(0, '', len(section), my_dict, depth_bound - tup[section_ind])
-                    temp_dict = {s1 + s2: 0 for s1 in temp_dict.keys() for s2 in my_dict.keys()}
-            cur_dict.update(temp_dict)
-        # Add labellings that swap 2's above and 3's below with 1's:
-        my_dict = {}
-        for s in cur_dict:
-            if '1' not in s:
-                continue
-            one_ind = s.index('1')
-            for j in range(len(s)):
-                if s[j] != '0':
-                    if j < one_ind and s[j] == '2':
-                        new_s = s[:j] + '1' + s[j+1:one_ind] + s[j] + s[one_ind + 1:]
-                        my_dict[new_s] = 0
-                    if j > one_ind and s[j] == '3':
-                        new_s = s[:one_ind] + s[j] + s[one_ind + 1:j] + '1' + s[j+1:]
-                        my_dict[new_s] = 0
-        cur_dict.update(my_dict)
+        # Assumes len(cur_sect)==1, which should always be true, but code is built more generally
+        create_labellings_one_section(cur_dict, cur_sect[0], can_first=k > 0)
         face = face_list[-i+1]
         label_inds = []  # Inds in flattened_sections
         labeled_edges = []  # List of edges that have labels to make searching later easier
@@ -141,6 +79,7 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
         inds_to_add = []  # Keep track of which indices of PREV_flattened_sections we need to add to
         # sp_inds_to_add = []  # Things that are defaulted to be 1 need a special type of label
         exit_edge = None  # Need to take extra steps if the face has an exit edge in it
+        exit_locs = []
         index = sum([len(cur_sect[j]) for j in range(len(cur_sect))])
         for j in range(len(face)):
             edge = (face[j], face[((j + 1) % len(face))])
@@ -148,8 +87,9 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
             # edge = (face[((j + 1) % len(face))], face[j])  # We know it'll be reversed!
             if named_edge in outer_boundary:
                 # Allow edge to be an exit_edge
-                if named_edge in exits or named_edge in rev_exits:  # Want to add it in as a newly created 1
-                    exit_edge = named_edge
+                exit_locs.append(named_edge) if k > 0 else ""
+                # if named_edge in exits or named_edge in rev_exits:  # Want to add it in as a newly created 1
+                #     exit_edge = named_edge
             elif named_edge in flattened_sections:
                 labeled_edges.append(named_edge)
                 cur_index = flattened_sections.index(named_edge)
@@ -160,10 +100,10 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
                 new_loc.append(named_edge)
                 if named_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
                     inds_to_add.append(prev_flattened_sections.index(named_edge))
-        if exit_edge is not None:
-            new_loc.append(exit_edge)
-            if exit_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
-                inds_to_add.append(prev_flattened_sections.index(exit_edge))
+        # if exit_edge is not None:
+        #     new_loc.append(exit_edge)
+        #     if exit_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
+        #         inds_to_add.append(prev_flattened_sections.index(exit_edge))
             # if len(set(new_loc[edge_ind-1]).intersection(set(new_loc[edge_ind]))) != 1:
         # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
         trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
@@ -334,23 +274,100 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
     return list(prev_dict.values())[0], sample_paths  # There should only be one value at the end
 
 
+def create_labellings_multisection(cur_dict, cur_sect, flat_outer):
+    for tup in partition(depth_bound, len(cur_sect)):  # Loop through all ordered partitions for the depth bound
+        temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
+        temp_dict[''] = 0
+        # if len(tup) > len(cur_sect):
+        #     continue
+        # if len(tup) < len(cur_sect):
+        #     tup += (0, ) * (len(cur_sect) - len(tup))
+        for section_ind in range(len(cur_sect)):
+            section = cur_sect[section_ind]
+            # Generate all possible motzkin paths for cur_sect
+            # find section that connects to start_edge
+            is_first = False  # be more careful if you actually have to do this
+            # if not (len(cur_sect) == 1 and i > len(outer_boundary)):
+            if is_first:
+                my_dict = {}
+                find_motzkin_paths(0, '', len(section), my_dict, depth_bound - tup[section_ind], with_one=True)
+                temp_dict = {s1 + s2: 0 for s1 in temp_dict.keys() for s2 in my_dict.keys()}
+            else:
+                my_dict = {}
+                find_motzkin_paths(0, '', len(section), my_dict, depth_bound - tup[section_ind], with_one=False)
+                temp_dict = {s1 + s2: 0 for s1 in temp_dict.keys() for s2 in my_dict.keys()}
+        cur_dict.update(temp_dict)
+    # Add labellings that swap 2's above and 3's below with 1's:
+    my_dict = {}
+    for s in cur_dict:
+        if '1' not in s:
+            continue
+        one_ind = s.index('1')
+        for j in range(len(s)):
+            if s[j] != '0':
+                if j < one_ind and s[j] == '2':
+                    new_s = s[:j] + '1' + s[j + 1:one_ind] + s[j] + s[one_ind + 1:]
+                    my_dict[new_s] = 0
+                if j > one_ind and s[j] == '3':
+                    new_s = s[:one_ind] + s[j] + s[one_ind + 1:j] + '1' + s[j + 1:]
+                    my_dict[new_s] = 0
+    cur_dict.update(my_dict)
+
+
+def create_labellings_one_section(cur_dict, cur_sect, can_first):
+    temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
+    temp_dict[''] = 0
+    # for section_ind in range(len(cur_sect)):
+    # Generate all possible motzkin paths for cur_sect
+    my_dict = {}
+    if can_first:
+        find_motzkin_paths(0, '', len(cur_sect), my_dict, depth_bound, with_one=True)
+    else:
+        find_motzkin_paths(0, '', len(cur_sect), my_dict, depth_bound, with_one=False)
+    cur_dict.update(my_dict)
+    # Add labellings that swap 2's above and 3's below with 1's:
+    my_dict = {}
+    for s in cur_dict:
+        if '1' not in s:
+            continue
+        one_ind = s.index('1')
+        for j in range(len(s)):
+            if s[j] != '0':
+                if j < one_ind and s[j] == '2':
+                    new_s = s[:j] + '1' + s[j + 1:one_ind] + s[j] + s[one_ind + 1:]
+                    my_dict[new_s] = 0
+                if j > one_ind and s[j] == '3':
+                    new_s = s[:one_ind] + s[j] + s[one_ind + 1:j] + '1' + s[j + 1:]
+                    my_dict[new_s] = 0
+    cur_dict.update(my_dict)
+
+
 # https://doi.org/10.1016/j.tcs.2020.12.013
-def find_motzkin_paths(h, w, n, m_dict, depth):
+# Returns _every_ possible Motzkin path with length n, prefix w, height h, and max_depth depth.
+# @param h: The current height of the path
+# @param w: The current prefix word
+# @param n: The total length of the path
+# @param m_dict: The dictionary holding the output paths
+# @param depth: The max height the path can reach
+# @param with_one: Whether the path should include paths with a 1 in a safe output
+def find_motzkin_paths(h, w, n, m_dict, depth, with_one):
     j = len(w)
-    if depth > depth_bound:
+    if depth > depth_bound:  # Too deep
         return
     if h > n - j:
         return
-    if j > n:
+    if j > n:  # Done
         m_dict[w] = 0
         return
     if h == n - j:
         m_dict[w + h * '2'] = 0
         return
     if h > 0:
-        find_motzkin_paths(h - 1, w + '2', n, m_dict, depth)
-    find_motzkin_paths(h, w + '0', n, m_dict, depth)
-    find_motzkin_paths(h + 1, w + '3', n, m_dict, depth+1)
+        find_motzkin_paths(h - 1, w + '2', n, m_dict, depth, with_one)  # can add a two!
+    if h == 0 and with_one:  # Can add a one too!
+        find_motzkin_paths(h, w + '1', n, m_dict, depth, False)  # can't have any more ones
+    find_motzkin_paths(h, w + '0', n, m_dict, depth, with_one)
+    find_motzkin_paths(h + 1, w + '3', n, m_dict, depth+1, with_one)
     return
 
 
@@ -995,7 +1012,6 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
     # Ensure that face_list results in a continuous boundary
     # Iterate through face_list keeping track of contiguous boundary sets
     # Store the contiguous sections as a list (each frontier) of lists (each connected component) of lists (frontiers)
-    rev_exits = {(e[1], e[0]) for e in exits}
     cont_sections = []
     face_list = []
     cur_boundary = copy.deepcopy(start_boundary_list)
@@ -1021,8 +1037,6 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
         index = len(cur_boundary)
         for i in range(len(face)):
             edge = (face[((i + 1) % len(face))], face[i])  # We know it'll be reversed?
-            if edge in exits or edge in rev_exits:
-                pass
             if edge in cur_boundary:
                 cur_index = cur_boundary.index(edge)
                 cur_boundary.pop(cur_index)
@@ -1030,8 +1044,6 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
                     index = cur_index
             else:
                 # Can't just do this, want the original order and need cont_section to just make a new section
-                # How to identify that this is the exit_edge?
-                # look at the face, and if it's not the usual end edge (71,74) then directly make new section
                 new_loc.append((edge[1], edge[0]))
         # Make sure new_loc follows the order of boundary:
         # swapped = True
@@ -1055,17 +1067,17 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
         # Find which parts of cont_sections new_loc matches with
         # Need to merge sections/ remove them
         prev_ver = copy.deepcopy(cont_sections[-1]) if len(cont_sections) > 0 else []
-        for exit_edge in exits:
-            # Special case for different exit_edges, make sure it's added to new_loc
-            if exit_edge[0] in face and exit_edge[1] in face:
-                new_loc.append(exit_edge)
-            # special case for strange exit_edges
-            if exit_edge in new_loc or (exit_edge[1], exit_edge[0]) in new_loc:
-                prev_ver.append([(exit_edge[1], exit_edge[0])])
-                try:
-                    new_loc.remove((exit_edge[1], exit_edge[0]))
-                except ValueError:
-                    new_loc.remove(exit_edge)
+        # for exit_edge in exits:
+        #     # Special case for different exit_edges, make sure it's added to new_loc
+        #     if exit_edge[0] in face and exit_edge[1] in face:
+        #         new_loc.append(exit_edge)
+        #     # special case for strange exit_edges
+        #     if exit_edge in new_loc or (exit_edge[1], exit_edge[0]) in new_loc:
+        #         prev_ver.append([(exit_edge[1], exit_edge[0])])
+        #         try:
+        #             new_loc.remove((exit_edge[1], exit_edge[0]))
+        #         except ValueError:
+        #             new_loc.remove(exit_edge)
 
         if len(cont_sections) == 0:  # special first-time setup
             cont_sections.append([new_loc])
@@ -1074,8 +1086,6 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
             for j in range(len(prev_ver)):
                 for i in range(len(face)):
                     edge = (face[((i + 1) % len(face))], face[i])  # We know it'll be reversed!
-                    if edge in exits or edge in rev_exits:  # TODO: Do I need to do something more here?
-                        continue
                     if edge in prev_ver[j - offset]:
                         prev_ver[j - offset].remove(edge)
                         if len(prev_ver[j - offset]) == 0:
@@ -1531,6 +1541,7 @@ def order_faces(graph, positions):
     print("Finish time: " + str(time.time()))
     return count
 
+
 def test():
     from non_int_graph import setup_grid, number_faces
     correct_vals = [0, 0, 0, 2, 12, 184, 8512, 1262816, 575780564, 789360053252, 3266598486981642]
@@ -1567,131 +1578,18 @@ def test():
             (start_edge[1], start_edge[0])) if cur_edge_index == -1 else cur_edge_index
         cur_boundary = copy.deepcopy(start_boundary_list)
 
-        for i in range(size):
-            for j in range(size-1):
-        #         cur_edge = [str(i) + '.' + str(j), str(i) + '.' + str(j+1)]
-        #         print(cur_edge)
-        #         print(cur_boundary)
-        #         face = graph.traverse_face(cur_edge[1], cur_edge[0])
-        #         # face = ensure_ccw(face, positions)
-        #         # boundary_verts = [x[0] for x in cur_boundary] + [cur_boundary[-1][1]]
-        #         # Face is good! Add to boundary
-        #         # stores the new vertices that will be added to the boundary
-        #         new_loc = []
-        #         # stores the index all face elements will be put to
-        #         index = len(cur_boundary)
-        #         for i in range(len(face)):
-        #             edge = (face[((i + 1) % len(face))], face[i])  # We know it'll be reversed!
-        #             named_edge = tuple(sorted(edge))
-        #             if named_edge in cur_boundary:
-        #                 cur_index = cur_boundary.index(named_edge)
-        #                 cur_boundary.pop(cur_index)
-        #                 if cur_index < index:
-        #                     index = cur_index
-        #             else:
-        #                 new_loc.append(named_edge)
-        #         # Adjust order of edges in new_loc to ensure beginning and end is good
-        #         new_loc_copy = []
-        #         for i in range(len(new_loc)):
-        #             if i > 0:
-        #                 new_loc_copy.append(new_loc[i] if new_loc[i][0] in new_loc[i-1] else (new_loc[i][1], new_loc[i][0]))
-        #             elif i < len(new_loc) - 1:
-        #                 new_loc_copy.append(
-        #                     new_loc[i] if new_loc[i][1] in new_loc[i + 1] else (new_loc[i][1], new_loc[i][0]))
-        #             else:
-        #                 new_loc_copy.append(new_loc[i])
-        #         new_loc = new_loc_copy
-        #         # Make sure new_loc follows the order of boundary:
-        #         swapped = len(cur_boundary) > 0 and len(new_loc) > 0 and \
-        #                   (len(cur_boundary) > index > 0 and (
-        #                           len(set(new_loc[0]).intersection(set(cur_boundary[index - 1]))) == 0 or len(
-        #                       set(new_loc[-1]).intersection(set(cur_boundary[index])))) == 0)
-        #         if swapped:  # need to find where to start the new locations
-        #             start_ind = -1
-        #             for i in range(len(new_loc)):
-        #                 if len(set(new_loc[i]).intersection(set(cur_boundary[index - 1]))) > 0:
-        #                     start_ind = i
-        #                     if len(set(new_loc[i]).intersection(set(cur_boundary[index - 1]))) == 1 and len(
-        #                             set(new_loc[(i - 1) % len(new_loc)]).intersection(set(cur_boundary[index]))) == 1:
-        #                         print("Found good rotation: " + str(new_loc)) if debug else ""
-        #                         break
-        #             new_loc = [new_loc[(x + start_ind) % len(new_loc)] for x in range(len(new_loc))]
-        #         # Find which parts of cont_sections new_loc matches with
-        #         # Need to merge sections/ remove them
-        #         if len(cont_sections) == 0:  # special first-time setup
-        #             cont_sections.append([new_loc])
-        #         elif len(new_loc) == 0:  # Another special case, just remove appropriate edges
-        #             prev_ver = copy.deepcopy(cont_sections[-1])
-        #             for j in range(len(prev_ver)):
-        #                 for i in range(len(face)):
-        #                     edge = (face[((i + 1) % len(face))], face[i])  # We know it'll be reversed!
-        #                     if edge in prev_ver[j]:
-        #                         prev_ver[j].remove(edge)
-        #                         if len(prev_ver[j]) == 0:
-        #                             prev_ver.pop(j)
-        #             cont_sections.append(prev_ver)
-        #         else:
-        #             new_section = True
-        #             prev_ver = copy.deepcopy(cont_sections[-1])
-        #             cont_section_verts = [[edge[0] for edge in section] + [section[-1][1]] for section in cont_sections[-1]]
-        #             # new_loc_verts = [edge[0] for edge in new_loc] + [new_loc[-1][1]]
-        #             for i in range(len(cont_section_verts)):
-        #                 section_vert = cont_section_verts[i]
-        #                 truth_table = (new_loc[0][0] in section_vert, new_loc[-1][1] in section_vert)
-        #                 if truth_table == (True, True):  # Just add to current cont_section
-        #                     cont_sections += [prev_ver]
-        #                     cont_sections[-1][i] = prev_ver[i][:section_vert.index(new_loc[0][0])] + new_loc \
-        #                                            + prev_ver[i][section_vert.index(new_loc[-1][1]):]
-        #                     new_section = False
-        #                     break
-        #                 elif truth_table == (False, False):
-        #                     continue
-        #                 elif truth_table == (True, False):  # Need to connect two sections to create a new one - or extend!
-        #                     should_extend = True
-        #                     for k in range(len(cont_section_verts)):
-        #                         if new_loc[-1][1] in cont_section_verts[(i + k) % len(cont_section_verts)]:
-        #                             prev_ver[i] = prev_ver[i][:section_vert.index(new_loc[0][0])] + new_loc + \
-        #                                           prev_ver[(i + k) % len(prev_ver)][
-        #                                           cont_section_verts[(i + k) % len(prev_ver)].index(new_loc[-1][1]):]
-        #                             prev_ver.pop((i + k) % len(prev_ver))
-        #                             # cont_sections += [prev_ver[:i]] if i + k != len(cont_section_verts) else [prev_ver[1:i]]
-        #                             # cont_sections[-1] += [prev_ver[i][:section_vert.index(new_loc[0][0])] + new_loc + \
-        #                             #                       prev_ver[(i + k) % len(prev_ver)][
-        #                             #                       cont_section_verts[(i + k) % len(prev_ver)].index(new_loc[-1][1]):]]
-        #                             # cont_sections[-1] += prev_ver[i + k + 1:]
-        #                             cont_sections += [prev_ver]
-        #                             should_extend = False
-        #                     if should_extend:  # Extend!
-        #                         cont_sections += [prev_ver]
-        #                         cont_sections[-1][i] = prev_ver[i][:section_vert.index(new_loc[0][0])] + new_loc
-        #                     new_section = False
-        #                     break
-        #                 elif truth_table == (False, True):  # Extend at the beginning- only if new_loc[0][0] nowhere else
-        #                     should_continue = False
-        #                     for k in range(len(cont_section_verts)):
-        #                         if new_loc[0][0] in cont_section_verts[k]:
-        #                             should_continue = True
-        #                     if should_continue:  # Very awkward way to skip
-        #                         continue
-        #                     cont_sections += [prev_ver]
-        #                     cont_sections[-1][i] = new_loc + prev_ver[i][section_vert.index(new_loc[-1][1]):]
-        #                     new_section = False
-        #                     break
-        #             if new_section:
-        #                 prev_ver.append(new_loc)
-        #                 cont_sections.append(prev_ver)
-                # Perform additional check to connect cont_sections we might have missed
-                # This can happen if a new face connects to multiple cont_sections, and we just add it to the first one
-                for i in range(len(cont_sections[-1])):
-                    # prev_ver[i]'s last vertex == prev_ver[i+1]'s first
-                    if cont_sections[-1][i][-1][1] == cont_sections[-1][(i + 1) % len(cont_sections[-1])][0][0]:
-                        # Connect!
-                        cont_sections[-1][i] += cont_sections[-1][(i + 1) % len(cont_sections[-1])]
-                        cont_sections[-1].pop((i + 1) % len(cont_sections[-1]))
-                        break
-                # cur_boundary = cur_boundary[:index] + new_loc + cur_boundary[index:]
-                face = ensure_ccw(face, positions)
-                face_list.append(face)
+        # # Perform additional check to connect cont_sections we might have missed
+        # # This can happen if a new face connects to multiple cont_sections, and we just add it to the first one
+        # for i in range(len(cont_sections[-1])):
+        #     # prev_ver[i]'s last vertex == prev_ver[i+1]'s first
+        #     if cont_sections[-1][i][-1][1] == cont_sections[-1][(i + 1) % len(cont_sections[-1])][0][0]:
+        #         # Connect!
+        #         cont_sections[-1][i] += cont_sections[-1][(i + 1) % len(cont_sections[-1])]
+        #         cont_sections[-1].pop((i + 1) % len(cont_sections[-1]))
+        #         break
+        # # cur_boundary = cur_boundary[:index] + new_loc + cur_boundary[index:]
+        # face = ensure_ccw(face, positions)
+        # face_list.append(face)
         print(face_list)
         print(cont_sections)
         var = count_non_int_paths_unrestr(face_list, start_edge, start_boundary_list, cont_sections)
@@ -1699,7 +1597,6 @@ def test():
         print(str(size) + ": " + str(var))
         # print("Duration: " + str(time.time() - start))
         assert var == correct_vals[size] if size < len(correct_vals) else ""
-
 
 
 # 185650586758
