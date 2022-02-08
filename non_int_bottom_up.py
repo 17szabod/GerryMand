@@ -18,17 +18,18 @@ import numpy as np
 import geopandas as gpd
 
 debug = False
-depth_bound = 2
+depth_bound = 4
+
 
 # https://stackoverflow.com/questions/10035752/elegant-python-code-for-integer-partitioning
 def partition(number, p_count):
     answer = set()
     if p_count == 1:
-        answer.add((number, ))
+        answer.add((number,))
         return answer
     for x in range(0, number + 1):
         for y in partition(number - x, p_count - 1):
-            answer.add((x, ) + y)
+            answer.add((x,) + y)
     return answer
 
 
@@ -43,33 +44,34 @@ def count_non_int_paths_w_table(table, edge_dict):
 
 
 # @profile
-def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
+def count_non_int_paths(face_list, outer_boundary, cont_sections, k):
     # Loop through reversed cont_sections - keep track of cur_sect and prev_sect
     # Generate and loop through each motzkin path of cur_sect and find connected path in prev_sect
-    # Add the values of each of cur_sect path's neighbors from prev_sect to it's value
+    # Add the values of each of cur_sect path's neighbors from prev_sect to its value
     # Store these in prev_dict and cur_dict
+    # prev_dict and cur_dict should have an entry for each k! Complexity is O(2^{k\sqrt{n}})
     # prev_dict = cur_dict - manually gc.collect() after?
-    # one = '1' if start_edge == (46,48) else '0'
-    # exits = {start_edge, exit_edge}
-    # rev_exits = {(e[1], e[0]) for e in exits}
     init_path = ''
-    prev_dict = {init_path: 1}  # Do we need to store which step it is in these dicts? No!
+    prev_dict = [{init_path: 0} for x in range(k+1)]  # Do we need to store which step it is in these dicts? No!
+    prev_dict[0][init_path] = 1
+    # sample_tree holds, for each k, a tree of possible paths starting from the initial layer
+    sample_tree = [[{}] for x in range(k+1)]
+    sample_tree[0][0][init_path] = [1, []]  # in the first layer, only k=0 has anything
     prev_sect = cont_sections[-1]
-    flat_outer = [x[0] for x in outer_boundary] + [outer_boundary[-1][1]]
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
-    k = 2
-    # exit_inds = []
-    # exit_inds = [(flat_outer.index(e[0]), flat_outer.index(e[1])) for e in exits]
-    num_samples = 1000
-    sample_paths = [[init_path] for x in range(num_samples)]  # The sampled path to return
-    # sample_path = ['1']
-    sample_tree = [{init_path: [1, []]}]
-    for i in range(2, len(cont_sections)+1):  # Range is off because negative values are offset
+    num_samples = 10000
+    # sample_paths[k][i] is the i'th sampled path with k districts
+    sample_paths = [[[init_path] for x in range(num_samples)]]
+    # probs = np.ones(sample_paths.shape())
+    for y in range(k):
+        sample_paths.append([])  # for k=1,...k, the init path has no districts
+    for i in range(2, len(cont_sections) + 1):  # Range is off because negative values are offset
         cur_sect = cont_sections[-i]
-        cur_dict = collections.defaultdict()
-        # Assumes len(cur_sect)==1, which should always be true, but code is built more generally
-        create_labellings_one_section(cur_dict, cur_sect[0], can_first=k > 0)
-        face = face_list[-i+1]
+        cur_dict = [collections.defaultdict() for x in range(k + 1)]
+        for cur_k in range(len(cur_dict)):  # cur_k can be 0,1,...,k
+            # Assumes len(cur_sect)==1, which should always be true, but code is built more generally
+            create_labellings_one_section(cur_dict[cur_k], cur_sect[0], cur_k)
+        face = face_list[-i + 1]
         label_inds = []  # Inds in flattened_sections
         labeled_edges = []  # List of edges that have labels to make searching later easier
         new_loc = []  # The list of edges that will be added
@@ -77,8 +79,6 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
         flattened_sections = [tuple(sorted(x)) for j in range(len(cur_sect)) for x in cur_sect[j]]
         prev_flattened_sections = [tuple(sorted(x)) for j in range(len(prev_sect)) for x in prev_sect[j]]
         inds_to_add = []  # Keep track of which indices of PREV_flattened_sections we need to add to
-        # sp_inds_to_add = []  # Things that are defaulted to be 1 need a special type of label
-        exit_edge = None  # Need to take extra steps if the face has an exit edge in it
         exit_locs = []
         index = sum([len(cur_sect[j]) for j in range(len(cur_sect))])
         for j in range(len(face)):
@@ -87,9 +87,7 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
             # edge = (face[((j + 1) % len(face))], face[j])  # We know it'll be reversed!
             if named_edge in outer_boundary:
                 # Allow edge to be an exit_edge
-                exit_locs.append(named_edge) if k > 0 else ""
-                # if named_edge in exits or named_edge in rev_exits:  # Want to add it in as a newly created 1
-                #     exit_edge = named_edge
+                exit_locs.append(named_edge)
             elif named_edge in flattened_sections:
                 labeled_edges.append(named_edge)
                 cur_index = flattened_sections.index(named_edge)
@@ -100,178 +98,333 @@ def count_non_int_paths(face_list, exits, outer_boundary, cont_sections):
                 new_loc.append(named_edge)
                 if named_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
                     inds_to_add.append(prev_flattened_sections.index(named_edge))
-        # if exit_edge is not None:
-        #     new_loc.append(exit_edge)
-        #     if exit_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
-        #         inds_to_add.append(prev_flattened_sections.index(exit_edge))
-            # if len(set(new_loc[edge_ind-1]).intersection(set(new_loc[edge_ind]))) != 1:
+        # if len(set(new_loc[edge_ind-1]).intersection(set(new_loc[edge_ind]))) != 1:
         # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
         trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
-        mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections)) if flattened_sections[j] not in labeled_edges]
-        mapping = [mapping.index(x) for x in range(len(mapping))]  # need to invert mapping, might be faster to do it above but speed doesnt matter in this part
-        path_map = collections.defaultdict(list)  # A mapping of paths to their "neighbors" to help with sampling
-        print("Working on section {0} with length {1}".format(len(cont_sections)-i, len(flattened_sections))) if debug else ""
+        mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections))
+                   if flattened_sections[j] not in labeled_edges]
+        # need to invert mapping, might be faster to do it above but speed doesnt matter in this part
+        mapping = [mapping.index(x) for x in range(len(mapping))]
+        # A mapping of paths in prev_dict to their "neighbors" in cur_dict to help with sampling
+        path_map = [collections.defaultdict(list) for x in range(len(cur_dict))]
+        print("Working on section {0} with length {1}".format(len(cont_sections) - i,
+                                                              len(flattened_sections))) if debug else ""
         print("Current face: " + str(face)) if debug else ""
         print("New location: " + str(new_loc)) if debug else ""
         print("Label_inds: " + str(label_inds)) if debug else ""
-        for path in cur_dict.keys():
-            # Find step type (labels)
-            labels = tuple([path[x] for x in label_inds if path[x] != '0'])
-            if len(labels) > 2:  # Too many paths meet, just continue
-                continue
-            next_path = ''.join([path[x] for x in range(len(path)) if x not in label_inds])
-            next_path = ''.join([next_path[mapping[x]] for x in range(len(next_path))])
-            # Collect all possible consequences of labels to cur_dict
-            if len(labels) == 0:
-                path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
-                # path1 = insert_at_indices(path1, '1'*len(sp_inds_to_add), sp_inds_to_add) if len(sp_inds_to_add) > 0 else path1
-                # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
-                cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
-                path_map[path1].append(path) if path1 in prev_dict else ""
-                for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
-                    if exit_edge is not None:  # We have an exit coming up, where two one's meet
-                        string_to_add = '0' * ind1 + '1' + '0' * (ind2 - ind1 - 1) + '1' + '0' * (
-                                    len(new_loc) - ind2 - 1)
-                    else:
+        for cur_k in range(k + 1):
+            # cur_k is the k of the paths in cur_dict, so path_map always maps prev_k=cur_k(-1?) to others
+            for path in cur_dict[cur_k].keys():
+                # Find step type (labels)
+                labels = tuple([path[x] for x in label_inds if path[x] != '0'])
+                if len(labels) > 2:  # Too many paths meet, just continue
+                    continue
+                next_path = ''.join([path[x] for x in range(len(path)) if x not in label_inds])
+                next_path = ''.join([next_path[mapping[x]] for x in range(len(next_path))])
+                # Collect all possible consequences of labels to cur_dict
+                if len(labels) == 0:
+                    # Can't have any edge exit if there is no 1 label
+                    path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                    # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
+                    cur_dict[cur_k][path] += prev_dict[cur_k][path1] if path1 in prev_dict[cur_k] else 0
+                    path_map[cur_k][path1].append((path, cur_k)) if path1 in prev_dict[cur_k] else ""
+                    for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
                         string_to_add = '0' * ind1 + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (len(new_loc) - ind2 - 1)
-                    path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        # path1 = next_path[:index] + string_to_add + next_path[index:]
+                        cur_dict[cur_k][path] += prev_dict[cur_k][path1] if path1 in prev_dict[cur_k] else 0
+                        path_map[cur_k][path1].append((path, cur_k)) if path1 in prev_dict[cur_k] else ""
+                    # If this is surrounded by a 3 and a 2, can we add either a 3-2 or a 2-3?
+                    # NO! A 3-2 corresponds to the two paths meeting, while a 2-3 would be a self-intersection, despite
+                    # the motzkin path being valid - this is a correct death of a path
+                    if cur_k > 0:
+                        # Add a potential entrance
+                        for exit_ind in range(len(exit_locs)):
+                            for ind1 in range(len(new_loc)):
+                                string_to_add = '0' * ind1 + '1' + '0' * (len(new_loc) - 1 - ind1)
+                                path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                cur_dict[cur_k][path] += prev_dict[cur_k-1][path1] if path1 in prev_dict[cur_k-1] else 0
+                                path_map[cur_k - 1][path1].append((path, cur_k)) if path1 in prev_dict[cur_k-1] else ""
+                elif len(labels) == 1:
+                    for ind1 in range(len(new_loc)):
+                        string_to_add = '0' * ind1 + labels[0] + '0' * (len(new_loc) - 1 - ind1)
+                        path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        # path1 = next_path[:index] + string_to_add + next_path[index:]
+                        cur_dict[cur_k][path] += prev_dict[cur_k][path1] if path1 in prev_dict[cur_k] else 0
+                        path_map[cur_k][path1].append((path, cur_k)) if path1 in prev_dict[cur_k] else ""
+                    if cur_k > 0:
+                        # Add a potential exit!
+                        # index is either 0 or len(path1)-1
+                        for exit_ind in range(len(exit_locs)):
+                            path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                            count = 0
+                            if '1' in labels:  # Simply add 0s into new_loc
+                                pass
+                            elif '3' in labels:  # Find the next 2 to turn into a 1 (can't be covered bc exit edge)
+                                for x in range(index, len(path1)):
+                                    if path1[x] == '3':
+                                        count += 1
+                                    if path1[x] == '2':
+                                        if count != 0:
+                                            count -= 1
+                                        else:
+                                            path1 = path1[:x] + '1' + path1[x + 1:]
+                                            break
+                            elif '2' in labels:  # Find the next 3 to turn into a 1 (can't be covered bc exit edge)
+                                for x in range(index - 1, -1, -1):
+                                    if path1[x] == '2':
+                                        count += 1
+                                    if path1[x] == '3':
+                                        if count != 0:
+                                            count -= 1
+                                        else:
+                                            path1 = path1[:x] + '1' + path1[x + 1:]
+                                            break
+                            # Code to find unpaired 3 or 2:
+                            # if '1' not in labels:
+                            #     for x in range(0, len(path1)):
+                            #         true_x = index - 1 - x if x + index >= len(path1) else x + index
+                            #         if path1[true_x] == '1':
+                            #             path1 = path1[:true_x] + ('3' if '2' in labels else '2') + path1[true_x + 1:]
+                            #             break
+                            cur_dict[cur_k][path] += prev_dict[cur_k - 1][path1] if path1 in prev_dict[cur_k - 1] else 0
+                            path_map[cur_k - 1][path1].append((path, cur_k)) if path1 in prev_dict[cur_k - 1] else ""
+                elif labels in [('1', '2'), ('2', '1'), ('1', '3'), ('3', '1'), ('2', '2'), ('3', '3'), ('3', '2'), ('1', '1')]:
+                    path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
                     # path1 = insert_at_indices(path1, '1'*len(sp_inds_to_add), sp_inds_to_add) if len(sp_inds_to_add) > 0 else path1
-                    # path1 = next_path[:index] + string_to_add + next_path[index:]
-                    cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
-                    path_map[path1].append(path) if path1 in prev_dict else ""
+                    # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
+                    count = 0
+                    # The order of 3-2's and 2-3's change depending on k
+                    if labels == ('3', '2'):  # possible, just combine
+                        pass
+                    elif labels == ('1', '1') and cur_k == 0:  # Only possible if cur_k == 0
+                        pass  # doesn't change prev_k
+                    # Need to find partner and change label:
+                    elif '3' in labels:  # 2 will be below it
+                        for x in range(index, len(path1)):
+                            if path1[x] == '3':
+                                count += 1
+                            if path1[x] == '2':
+                                if count != 0:
+                                    count -= 1
+                                else:
+                                    path1 = path1[:x] + ('1' if labels != ('3', '3') else '3') + path1[x + 1:]
+                                    break
+                    else:
+                        for x in range(index - 1, -1, -1):
+                            if path1[x] == '2':
+                                count += 1
+                            if path1[x] == '3':
+                                if count != 0:
+                                    count -= 1
+                                else:
+                                    path1 = path1[:x] + ('1' if labels != ('2', '2') else '2') + path1[x + 1:]
+                                    break
+                    if count != 0:
+                        raise Exception("Failed to match a 3 to a 2 or a 2 to 3.")
+                    cur_dict[cur_k][path] += prev_dict[cur_k][path1] if path1 in prev_dict[cur_k] else 0
+                    path_map[cur_k][path1].append((path, cur_k)) if path1 in prev_dict[cur_k] else ""
                     # if path1 not in prev_dict:
                     #     print(path1)
-            elif len(labels) == 1:
-                for ind1 in range(len(new_loc)):
-                    string_to_add = '0' * ind1 + labels[0] + '0' * (len(new_loc) - 1 - ind1)
-                    path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
-                    # path1 = insert_at_indices(path1, '1'*len(sp_inds_to_add), sp_inds_to_add) if len(sp_inds_to_add) > 0 else path1
-                    # path1 = next_path[:index] + string_to_add + next_path[index:]
-                    cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
-                    path_map[path1].append(path) if path1 in prev_dict else ""
-                    # if path1 not in prev_dict:
-                    #     print(path1)
-            elif labels in [('1', '2'), ('2', '1'), ('1', '3'), ('3', '1'), ('2', '2'), ('3', '3'), ('3', '2')]:
-                path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
-                # path1 = insert_at_indices(path1, '1'*len(sp_inds_to_add), sp_inds_to_add) if len(sp_inds_to_add) > 0 else path1
-                # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
-                count = 0
-                if labels == ('3', '2'):  # possible, just combine
-                    pass
-                # Need to find partner and change label:
-                elif '3' in labels:  # 2 will be below it
-                    for x in range(index, len(path1)):
-                        if path1[x] == '3':
-                            count += 1
-                        if path1[x] == '2':
-                            if count != 0:
-                                count -= 1
-                            else:
-                                path1 = path1[:x] + ('1' if labels != ('3', '3') else '3') + path1[x + 1:]
-                                break
+                # labels is reversed from the path string due to orientation of faces - NOT ALWAYS???
+                elif labels == ('2', '3'):  # or labels == ('2', '3'):
+                    pass  # Would close a loop, this parent gets no children
+                    # print("Closed a loop!")
+                    # print(''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list)) + "." + str(cur_length))
+                    # return 0
+                    # We just closed a loop! Currently allowed
+                    # raise Exception("Theoretically impossible case occurred, we closed a loop.")
                 else:
-                    for x in range(index-1, -1, -1):
-                        if path1[x] == '2':
-                            count += 1
-                        if path1[x] == '3':
-                            if count != 0:
-                                count -= 1
-                            else:
-                                path1 = path1[:x] + ('1' if labels != ('2', '2') else '2') + path1[x + 1:]
-                                break
-                if count != 0:
-                    raise Exception("Failed to match a 3 to a 2 or a 2 to 3.")
-                cur_dict[path] += prev_dict[path1] if path1 in prev_dict else 0
-                path_map[path1].append(path) if path1 in prev_dict else ""
-                # if path1 not in prev_dict:
-                #     print(path1)
-            elif labels == ('2', '3'):# or labels == ('2', '3'):
-                pass  # ?
-                # print("Closed a loop!")
-                # print(''.join([str(x) for x in boundary_labels]) + "." + str(len(face_list)) + "." + str(cur_length))
-                # return 0
-                # We just closed a loop! Currently allowed
-                # raise Exception("Theoretically impossible case occurred, we closed a loop.")
-            else:
-                raise Exception("Invalid labels on step location")
+                    raise Exception("Invalid labels on step location")
         # Sample by stepping backwards - this is only possible once we've already created both prev and cur dicts
-        # This might work, but stepping backwards is nontrivial - for now, slow down above
         # Sol: keep track of PARTIAL full trees, and sample once space is too large
-        # offset = 0
-        # for i in range(len(sample_paths)):
-        #     sample_path = sample_paths[i - offset]
-        #     count_arr = [cur_dict[x] for x in path_map[sample_path[-1]]]
-        #     if len(count_arr) == 0:
-        #         sample_paths.pop(i - offset)
-        #         offset +=1
-        #         continue
-        #     choice = np.random.uniform(0, sum(count_arr))
-        #     sample_ind = np.arange(len(count_arr))[np.asanyarray([sum(count_arr[:x+1]) >= choice for x in range(len(count_arr))])][0]
-        #     sample_paths[i-offset].append(path_map[sample_path[-1]][sample_ind])
-        # Build another layer of sample_tree
-        new_layer = collections.defaultdict(list)
-        for p in sample_tree[-1]:
-            sample_tree[-1][p][1] += path_map[p]
-            for m in path_map[p]:
-                new_layer[m] = [cur_dict[m], []]
-        sample_tree.append(new_layer)
-        # clean empty paths
-        prev_rem = []
-        for i2 in range(len(sample_tree)-1):
-            to_rem = []
-            cur_layer = sample_tree[-i2-2]
-            for p in cur_layer:
-                offset = 0
-                for j in range(len(cur_layer[p][1])):
-                    if cur_layer[p][1][j-offset] in prev_rem:
-                        cur_layer[p][1].pop(j-offset)
-                        offset += 1
-                if len(cur_layer[p][1]) == 0:
-                    to_rem.append(p)
-            for p in to_rem:
-                cur_layer.pop(p)
-            prev_rem = copy.deepcopy(to_rem)
-        # Occasionally trim!
-        if len(sample_tree) >= 27 or i==len(cont_sections):
-            for k in range(len(sample_tree)-1):
-                layer = sample_tree[k]
-                offset = 0
-                for i2 in range(len(sample_paths)):
-                    sample_path = sample_paths[i2 - offset]
-                    # Need to find keep track of counts too
-                    if sample_path[-1] not in layer:  # Try to take a step back and salvage it?
-                        if sample_path[-2] in sample_tree[k-1] and k > 0:
-                            count_arr = [sample_tree[k][x][0] for x in sample_tree[k-1][sample_path[-2]][1]]
-                            if len(count_arr) == 0:
-                                sample_paths.pop(i2 - offset)
-                                offset += 1
-                                continue
-                            choice = np.random.uniform(0, sum(count_arr))
-                            sample_ind = np.arange(len(count_arr))[
-                                np.asanyarray([sum(count_arr[:x + 1]) >= choice for x in range(len(count_arr))])][0]
-                            sample_paths[i2 - offset].pop(-1)
-                            sample_paths[i2 - offset].append(sample_tree[k-1][sample_path[-2]][1][sample_ind])
-                        else:
-                            sample_paths.pop(i2 - offset)
-                            offset += 1
-                            continue
-                    count_arr = [sample_tree[k+1][x][0] for x in layer[sample_path[-1]][1]]
-                    if len(count_arr) == 0:
-                        sample_paths.pop(i2 - offset)
-                        offset += 1
-                        continue
-                    choice = np.random.uniform(0, sum(count_arr))
-                    sample_ind = np.arange(len(count_arr))[np.asanyarray([sum(count_arr[:x+1]) >= choice for x in range(len(count_arr))])][0]
-                    sample_paths[i2-offset].append(layer[sample_path[-1]][1][sample_ind])
+        ##################################################################################
+        # This might work, but stepping backwards is nontrivial - for now, slow down above
+        # new_sample_paths = [[] for x in range(len(cur_dict))]
+        # for cur_k in range(len(cur_dict)):
+        #     # offset = 0
+        #     for i2 in range(len(sample_paths[cur_k])):
+        #         sample_path = sample_paths[cur_k][i2]
+        #         count_arr = [cur_dict[x[1]][x[0]] for x in path_map[cur_k][sample_path[-1]]]
+        #         if len(count_arr) == 0:
+        #             # sample_paths[cur_k].pop(i2 - offset)
+        #             # offset += 1
+        #             print("Could not continue path: " + str(sample_path))
+        #             continue
+        #         choice = np.random.uniform(0, sum(count_arr))
+        #         sample_ind = np.arange(len(count_arr))[np.asanyarray([sum(count_arr[:x+1]) >= choice for x in range(len(count_arr))])][0]
+        #         path_k = path_map[cur_k][sample_path[-1]][sample_ind][1]
+        #         new_sample_paths[path_k].append(sample_paths[cur_k][i2])
+        #         new_sample_paths[path_k][-1].append(path_map[cur_k][sample_path[-1]][sample_ind][0])
+        #         # if path_k != cur_k:
+        #         #     sample_paths[path_k].append(sample_paths[cur_k][i2 - offset])
+        #         #     sample_paths[path_k][-1].append(path_map[cur_k][sample_path[-1]][sample_ind][0])
+        #         #     sample_paths[cur_k].pop(i2-offset)
+        #         #     offset += 1
+        #         # else:
+        #         #     sample_paths[path_k][i2 - offset].append(path_map[cur_k][sample_path[-1]][sample_ind][0])
+        # sample_paths = new_sample_paths
+        print("i={0}/{1}, {2} paths remain".format(i, len(face_order), sum(len(k_paths) for k_paths in sample_paths))) # if i % 10 == 5 else ""
+        # prev_dict = cur_dict
+        # prev_sect = cur_sect
+        # continue
+        #######################################################################
+        # Sample tree becomes a sample forest with k+1 trees
+        for cur_k in range(len(cur_dict)):
+            # Build another layer of sample_tree
             new_layer = collections.defaultdict(list)
-            for i2 in range(len(sample_paths)):
-                new_layer[sample_paths[i2][-1]] = [cur_dict[sample_paths[i2][-1]], []]
-            sample_tree = [new_layer]
+            # For each path in the last layer of the sample _forest_
+            for prev_k in range(max(0, cur_k-1), cur_k+1):  # k can only increase by 1
+                for p in sample_tree[prev_k][-1 if prev_k == cur_k else -2]:  # sample_tree[prev_k] already has a new layer
+                    for m in path_map[prev_k][p]:  # Loop through each tuple of next_path, next_k
+                        if m[1] != cur_k:
+                            # This next path does not come to this new k
+                            continue
+                        sample_tree[prev_k][-1 if prev_k == cur_k else -2][p][1].append(m)  # Add the newest paths to the sample tree entry
+                        # Add the empty entry into the new layer
+                        new_layer[m[0]] = [cur_dict[m[1]][m[0]], []]  # not always cur_k!
+            sample_tree[cur_k].append(new_layer)
+            # clean empty paths
+        for cur_k in range(len(cur_dict)):
+            prev_rem = []
+            # Loop through each layer of each sample tree bottom up
+            for i2 in range(len(sample_tree[cur_k]) - 1):
+                to_rem = []
+                cur_layer = sample_tree[cur_k][-i2 - 2]  # for i2=0, this is the second to last
+                # next_layer = sample_tree[cur_k][-i2 - 1]  # for i2=0, this is the last layer
+                # nexter_layer = sample_tree[min(k, cur_k + 1)][-i2 - 1]  # for i2=0, this is the last layer
+                next_layer = set(sample_tree[cur_k][-i2 - 1].keys()).union(set(sample_tree[min(k, cur_k + 1)][-i2 - 1].keys()))
+                for p in cur_layer:  # p is a tuple of (count, [(next_path, next_k)])
+                    offset = 0
+                    for j in range(len(cur_layer[p][1])):
+                        if cur_layer[p][1][j - offset] in prev_rem or cur_layer[p][1][j-offset][0] not in next_layer:
+                            cur_layer[p][1].pop(j - offset)
+                            offset += 1
+                    if len(cur_layer[p][1]) == 0:
+                        to_rem.append(p)
+                for p in to_rem:
+                    cur_layer.pop(p)
+                prev_rem = copy.deepcopy(to_rem)
+        tree_size = sum(len(x) for x in sample_tree)
+        # Tree is trimmed, just need to sample
+        if tree_size >= 54 or i == len(cont_sections):
+            sample_paths, sample_tree = sample_from_tree(cur_dict, sample_paths, sample_tree)
         prev_dict = cur_dict
         prev_sect = cur_sect
     # for path in sample_paths:
     #     path += ['1']
-    return list(prev_dict.values())[0], sample_paths  # There should only be one value at the end
+    return list(prev_dict[k].values())[0], sample_paths  # There should only be one value at the end
+
+
+def sample_from_tree(cur_dict, sample_paths, sample_tree):
+    overhead = 2
+    new_sample_paths = [[] for x in range(len(cur_dict))]
+    offset = overhead if len(sample_paths[0][0]) > 1 else 0
+    # Loop through each initial k > 0
+    for cur_k in range(len(cur_dict)):
+        # Loop through each path
+        for i2 in range(len(sample_paths[cur_k])):
+            path_k = cur_k  # The path should start at a certain k
+            sample_path = sample_paths[cur_k][i2]
+            kill = False
+            # Loop through each layer - tree size and sample path length are off by overhead
+            for ind in range(len(sample_tree[path_k]) - offset - 1):  # each tree should have the same length
+                ind = ind + offset
+                sampled_pair = sample_one(sample_path, sample_tree, ind, path_k)  # sample a step (with tracebacks!)
+                if sampled_pair is None:
+                    print("This path died at index {0}: {1}".format(ind, sample_path[-4:]))
+                    kill = True
+                    break
+                sample_path, path_k = sampled_pair
+            new_sample_paths[path_k].append(sample_path) if not kill else ""  # Add newly sampled path
+    sample_paths = new_sample_paths
+    # New paths have been sampled in sample_paths
+    # reset sample tree to newest path ends plus some overhead
+    new_tree = [[(0, dict())] for x in range(len(cur_dict))]
+    for cur_k in range(len(cur_dict)):
+        new_layer = collections.defaultdict(list)
+        # For each path in sample_paths
+        for i2 in range(len(sample_paths[cur_k])):
+            # Add the current entries
+            if sample_paths[cur_k][i2][-overhead-1] in sample_tree[cur_k][-overhead-1]:
+                # Just copies the elements in sample_paths[..][-overhead-1] over to a new layer, and sets that as new_tree
+                new_layer[sample_paths[cur_k][i2][-overhead-1]] = \
+                    sample_tree[cur_k][-overhead-1][sample_paths[cur_k][i2][-overhead-1]]
+            elif cur_k > 0 and sample_paths[cur_k][i2][-overhead-1] in sample_tree[cur_k-1][-overhead-1]:
+                # The -overhead-1 might have been in a different path_k, because sample_paths is indexed by the last path_k
+                new_layer[sample_paths[cur_k][i2][-overhead - 1]] = \
+                    sample_tree[cur_k-1][-overhead - 1][sample_paths[cur_k][i2][-overhead - 1]]
+            elif cur_k > 1 and sample_paths[cur_k][i2][-overhead-1] in sample_tree[cur_k-2][-overhead-1]:
+                # Potentially even 2 steps, up to overhead. Indexing is incredibly awkward
+                new_layer[sample_paths[cur_k][i2][-overhead - 1]] = \
+                    sample_tree[cur_k-2][-overhead - 1][sample_paths[cur_k][i2][-overhead - 1]]
+            else:
+                print("Path {0} failed inexplicably. cur_k is {1}".format(sample_paths[cur_k][i2], cur_k))
+        new_tree[cur_k] = [new_layer]
+    # Rebuild tree from whatever is left below the overhead
+    for level in range(overhead):
+        for cur_k in range(len(cur_dict)):
+            # Build another layer of sample_tree
+            new_layer = collections.defaultdict(list)
+            # For each path in the last layer of the sample tree
+            for prev_k in range(max(0, cur_k - 1), cur_k + 1):  # k can only increase by 1
+                for v in new_tree[prev_k][-1 if prev_k == cur_k else -2].values():  # sample_tree[prev_k] already has a new layer
+                    # There is a strange case of empty entries coming from the fact that sample_tree is a default_dict,
+                    # and if we ever query for a nonexisting entry it creates and empty list. This should not be
+                    # happening, need to find mistake and fix it. For now this is a workaround.
+                    if len(v) == 0:  # happens first at i=64???
+                        continue
+                    # p is of the form [count, {(next_paths, next_ks)}]
+                    # Add the entry from sample_tree to new_tree
+                    for m in v[1]:  # m is of the form (next_path, next_k)
+                        if m[1] == cur_k:  # m goes to this current k
+                            if m[0] in sample_tree[cur_k][-overhead+level]:
+                                # Add the (potentially) empty entry into the new layer
+                                new_layer[m[0]] = sample_tree[cur_k][-overhead+level][m[0]]  # not always cur_k!
+                            else:
+                                print("This should not happen. Avoiding creating an empty entry, but debug this.")
+            new_tree[cur_k].append(new_layer)
+    return sample_paths, new_tree
+
+
+# Returns a sampled path of length cur_ind mod tree size cutoff
+def sample_one(sample_path, sample_tree, cur_ind, path_k):
+    layer = sample_tree[path_k][cur_ind]
+    if sample_path[-1] not in layer:  # Try to take a step back and salvage it?
+        if cur_ind > 0:
+            # path_k may have changed as we step back-- loop through all and ensure the step is in the right direction
+            for prev_k in [path_k, path_k-1]:  # start with path_k
+                new_path = sample_one(sample_path[:-1], sample_tree, cur_ind - 1, prev_k)
+                if new_path is not None:
+                    sample_path, path_k = new_path
+                    break  # Might mess with uniformity a little?
+            if new_path is None:
+                return None  # recursively kill off path
+        else:
+            return None  # End case
+    layer = sample_tree[path_k][cur_ind]  # May have modified path_k, need to redefine layer
+    if sample_path[-1] not in layer:  # layer may have change, so we need to recheck if next step is possible
+        return None  # Just give up as we always prefer keeping the same path_k, no way to salvage it
+    # count of sample_tree[next_k][next_layer][next_path] for (next_path, next_k) in layer[path[-1]]
+    # count_arr = [sample_tree[x[1]][ind + 1][x[0]][0] for x in layer[sample_path[-1]][1]]
+    # Isn't it always uniform anyways? Not quite- counts for children can come from multiple parents
+    # Or just make it uniform
+    count_arr = [1 for x in layer[sample_path[-1]][1] if len(x) > 0]
+    if len(count_arr) == 0:
+        return None  # Really should never happen, unless layer has an empty entry
+    choice = np.random.uniform(0, sum(count_arr))
+    sample_ind = np.arange(len(count_arr))[
+        np.asanyarray([sum(count_arr[:x + 1]) >= choice for x in range(len(count_arr))])][0]
+    # Set new path_k and append next step in path
+    path_k = layer[sample_path[-1]][1][sample_ind][1]
+    # if path_k != prev_path_k:
+    #     sample_paths[path_k].append(sample_paths[prev_path_k][i2-offset])
+    #     sample_paths[path_k][-1].append(layer[sample_path[-1]][1][sample_ind][0])
+    #     offset += 1
+    # else:
+    #     sample_paths[path_k][i2 - offset].append(layer[sample_path[-1]][1][sample_ind][0])
+    sample_path.append(layer[sample_path[-1]][1][sample_ind][0])
+    return sample_path, path_k
 
 
 def create_labellings_multisection(cur_dict, cur_sect, flat_outer):
@@ -314,16 +467,15 @@ def create_labellings_multisection(cur_dict, cur_sect, flat_outer):
     cur_dict.update(my_dict)
 
 
-def create_labellings_one_section(cur_dict, cur_sect, can_first):
+def create_labellings_one_section(cur_dict, cur_sect, k):
     temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
     temp_dict[''] = 0
     # for section_ind in range(len(cur_sect)):
     # Generate all possible motzkin paths for cur_sect
     my_dict = {}
-    if can_first:
-        find_motzkin_paths(0, '', len(cur_sect), my_dict, depth_bound, with_one=True)
-    else:
-        find_motzkin_paths(0, '', len(cur_sect), my_dict, depth_bound, with_one=False)
+    find_motzkin_paths(0, '', len(cur_sect), my_dict, 0, k)
+    if k == 2:
+        find_motzkin_paths(0, '', len(cur_sect), my_dict, 0, 0)
     cur_dict.update(my_dict)
     # Add labellings that swap 2's above and 3's below with 1's:
     my_dict = {}
@@ -349,25 +501,25 @@ def create_labellings_one_section(cur_dict, cur_sect, can_first):
 # @param n: The total length of the path
 # @param m_dict: The dictionary holding the output paths
 # @param depth: The max height the path can reach
-# @param with_one: Whether the path should include paths with a 1 in a safe output
-def find_motzkin_paths(h, w, n, m_dict, depth, with_one):
+# @param with_one: Whether the path should only include paths with a 1 in a safe output
+def find_motzkin_paths(h, w, n, m_dict, depth, num_ones):
     j = len(w)
     if depth > depth_bound:  # Too deep
         return
     if h > n - j:
         return
-    if j > n:  # Done
+    if j > n and num_ones == 0:  # Done
         m_dict[w] = 0
         return
-    if h == n - j:
+    if h == n - j and num_ones == 0:  # Fill the rest with 2's
         m_dict[w + h * '2'] = 0
         return
     if h > 0:
-        find_motzkin_paths(h - 1, w + '2', n, m_dict, depth, with_one)  # can add a two!
-    if h == 0 and with_one:  # Can add a one too!
-        find_motzkin_paths(h, w + '1', n, m_dict, depth, False)  # can't have any more ones
-    find_motzkin_paths(h, w + '0', n, m_dict, depth, with_one)
-    find_motzkin_paths(h + 1, w + '3', n, m_dict, depth+1, with_one)
+        find_motzkin_paths(h - 1, w + '2', n, m_dict, depth, num_ones)  # can add a two!
+    if h == 0 and num_ones > 0:  # Can add a one too!
+        find_motzkin_paths(h, w + '1', n, m_dict, depth, num_ones - 1)  # can have one less one
+    find_motzkin_paths(h, w + '0', n, m_dict, depth, num_ones)
+    find_motzkin_paths(h + 1, w + '3', n, m_dict, depth + 1, num_ones)
     return
 
 
@@ -382,7 +534,7 @@ def count_non_int_paths_unrestr(face_list, start_edge, outer_boundary, cont_sect
     flat_outer = [x[0] for x in outer_boundary] + [outer_boundary[-1][1]]
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
     start_edge_ind = outer_boundary.index(start_edge)
-    for i in range(2, len(cont_sections)+1):  # Range is off because negative values are offset
+    for i in range(2, len(cont_sections) + 1):  # Range is off because negative values are offset
         cur_sect = cont_sections[-i]
         cur_dict = collections.defaultdict()
         cur_dict[''] = 0
@@ -411,7 +563,7 @@ def count_non_int_paths_unrestr(face_list, start_edge, outer_boundary, cont_sect
                 my_dict = {}
                 find_motzkin_paths_unrestr(0, '', len(section), my_dict)
                 cur_dict = {s1 + s2: 0 for s1 in cur_dict.keys() for s2 in my_dict.keys()}
-        face = face_list[-i+1]
+        face = face_list[-i + 1]
         label_inds = []  # Inds in flattened_sections
         labeled_edges = []  # List of edges that have labels to make seraching later easier
         new_loc = []  # The list of edges that will be added
@@ -438,9 +590,12 @@ def count_non_int_paths_unrestr(face_list, start_edge, outer_boundary, cont_sect
                     inds_to_add.append(prev_flattened_sections.index(named_edge))
         # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
         trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
-        mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections)) if flattened_sections[j] not in labeled_edges]
-        mapping = [mapping.index(x) for x in range(len(mapping))]  # need to invert mapping, might be faster to do it above but speed doesnt matter in this part
-        print("Working on section {0} with length {1}".format(len(cont_sections)-i, '.'.join([str(len(sect)) for sect in cur_sect])))
+        mapping = [trimmed_prev_flattened_sections.index(flattened_sections[j]) for j in range(len(flattened_sections))
+                   if flattened_sections[j] not in labeled_edges]
+        mapping = [mapping.index(x) for x in range(
+            len(mapping))]  # need to invert mapping, might be faster to do it above but speed doesnt matter in this part
+        print("Working on section {0} with length {1}".format(len(cont_sections) - i,
+                                                              '.'.join([str(len(sect)) for sect in cur_sect])))
         print("Current face: " + str(face)) if debug else ""
         print("New location: " + str(new_loc)) if debug else ""
         print("Label_inds: " + str(label_inds)) if debug else ""
@@ -768,7 +923,8 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
         # ax = plt.subplot(121)
         # plt.sca(ax)
         plt.figure(figsize=(25, 25))
-        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0, width=.2)
+        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+                width=.2)
         # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
         # nx.draw(G2, pos=positions, with_labels=True)
         # centers.plot()
@@ -848,50 +1004,36 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
 
     exit_edge = (71, 74)
     start_edge = (46, 48)
-    sindex = 0
-    eindex = 0
     outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
                      key=lambda x: len(x))
-    sample_paths = []
-    for i in range(len(outer_face)):
-        # edge = tuple(sorted([outer_face[i], outer_face[(i + 1) % len(outer_face)]]))
-        edge = (outer_face[i], outer_face[(i + 1) % len(outer_face)])
-        if edge == start_edge:
-            sindex = i
-        if edge == exit_edge:
-            eindex = i
     cts = []
-    diversities = []
     efficiencies = []
-    k = 3
-    for i in range(1, int(len(outer_face)/k)):
-        start_edge = (outer_face[(sindex+k*i) % len(outer_face)], outer_face[(sindex + k*i + 1) % len(outer_face)])
-        exit_edge = (outer_face[(eindex+k*i) % len(outer_face)], outer_face[(eindex + k*i + 1) % len(outer_face)])
-        pruned_edges = [(112,99), (99,24), (24,18), (18,110), (104,2), (2,1), (1,104), (106,0), (0,8), (8, 106)]
-        if start_edge in pruned_edges or exit_edge in pruned_edges:
-            continue
-        print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
-        cont_sections, count, sample_paths = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge)
-        for path in sample_paths:
-            ct, g1, g2 = eval_path(path, cont_sections, copy.deepcopy(g), positions, start_edge, exit_edge)
-            sum1 = 0
-            sum2 = 0
-            for v in g1:
-                sum1 += loc_df.loc[v]['PERSONS']
-            for v in g2:
-                sum2 += loc_df.loc[v]['PERSONS']
-            # Population count is unrealistic for exploded graphs, so ignore?
-            # if math.fabs(sum1 - sum2) < 1000:
-                # sum1 = 0
-                # sum2 = 0
-                # efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
-                # print("{0}, {1}".format(sum1, sum2))
-            efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
-            cts.append(ct)
-        print("Found {0} possible partitions".format(len(efficiencies)))
-    print("Path length distribution: Mean {0} with variance {1}, shortest path {2}".format(np.mean(cts), np.std(cts), np.min(cts)))
+    # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
+    k = 2
+    cont_sections, count, sample_paths = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k)
+    for path in sample_paths[k]:
+        ct, g1, g2 = eval_path(path, cont_sections, copy.deepcopy(g), positions, draw=True, draw2=False)
+        sum1 = 0
+        sum2 = 0
+        for v in g1:
+            sum1 += loc_df.loc[v]['PERSONS']
+        for v in g2:
+            sum2 += loc_df.loc[v]['PERSONS']
+        # Population count is unrealistic for exploded graphs, so ignore?
+        # if math.fabs(sum1 - sum2) < 1000:
+        # sum1 = 0
+        # sum2 = 0
+        # efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
+        # print("{0}, {1}".format(sum1, sum2))
+        efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
+        cts.append(ct)
+    print("Found {0} possible partitions".format(len(efficiencies)))
+    print("Path length distribution: Mean {0} with variance {1}, shortest path {2}".format(np.mean(cts), np.std(cts),
+                                                                                           np.min(cts)))
     # print("Diversity distribution: Sampled {2} with mean {0} with variance {1}".format(np.mean(diversities), np.std(diversities), len(diversities)))
-    print("Efficiency gap distribution: Sampled {2} with mean {0} with variance {1}".format(np.mean(efficiencies), np.std(efficiencies), len(efficiencies)))
+    print("Efficiency gap distribution: Sampled {2} with mean {0} with variance {1}".format(np.mean(efficiencies),
+                                                                                            np.std(efficiencies),
+                                                                                            len(efficiencies)))
     sum1 = 0
     sum2 = 0
     g1 = []
@@ -911,7 +1053,7 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
     return count
 
 
-def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge):
+def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr):
     # exit_edge = (71, 74)
     # start_edge = (46, 48)
     outer_face_edge = (71, 74)  # The edge where the outer face is cut
@@ -933,7 +1075,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge):
     face_dict = {}
     # Clean bad/unnecessary parts of the graph
     start_boundary_list, h2 = clean_graph(exit_edge, face_dict, g, positions, start_boundary_labels,
-                                                  start_boundary_list, start_edge)
+                                          start_boundary_list, start_edge)
     if draw:
         plt.figure(figsize=(25, 25))
         nx.draw(h2, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
@@ -1002,8 +1144,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge):
     # table, edge_dict = allocate_table(face_list, start_edge, start_boundary_list, cont_sections)
     print("Finished setup: " + str(time.time()))
     # count = count_non_int_paths_w_table(table, edge_dict)
-    exits = {start_edge, exit_edge}
-    count, sample_paths = count_non_int_paths(face_list, exits, start_boundary_list, cont_sections)
+    count, sample_paths = count_non_int_paths(face_list, start_boundary_list, cont_sections, num_distr)
     print("Counted " + str(count) + " non-self-intersecting paths")
     return cont_sections, count, sample_paths
 
@@ -1264,25 +1405,32 @@ def calculate_eff_gap(g1, g2, loc_df, sum1, sum2):
     return ((dem_waste1 - rep_waste1) / sum1 + (dem_waste2 - rep_waste2) / sum2) / 2
 
 
-def eval_path(path, cont_sections, g, positions, start_edge, exit_edge, draw=False, draw2=True):
-    edges = {start_edge, exit_edge, (start_edge[1], start_edge[0]), (exit_edge[1], exit_edge[0])}
+def eval_path(path, cont_sections, g, positions, draw=False, draw2=True):
+    edges = set()
     for i in range(len(path)):
-        assignment = path[-i-1]
+        assignment = path[-i - 1]
         sect = cont_sections[i]
         flat_sect = [x for j in range(len(sect)) for x in sect[j]]
         edges = edges.union(set([flat_sect[i] for i in range(len(assignment)) if assignment[i] != '0']))
-        edges = edges.union(set([(flat_sect[i][1], flat_sect[i][0]) for i in range(len(assignment)) if assignment[i] != '0']))
+        edges = edges.union(
+            set([(flat_sect[i][1], flat_sect[i][0]) for i in range(len(assignment)) if assignment[i] != '0']))
     if draw:
-        edge_col = [('blue' if e in edges else 'black') for e in g.edges]
-        nx.draw(g, pos=positions, node_size=30, with_labels=True, font_size=6, font_color='red', edge_color=edge_col)
+        plt.figure(figsize=(18, 18))
+        edge_col = [('red' if e in edges else 'black') for e in g.edges]
+        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+                width=.2, edge_color=edge_col)
         plt.show()
     g.remove_edges_from(edges)
     if draw2:
         plt.figure(figsize=(18, 18))
-        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0, width=.2)
+        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+                width=.2)
         # nx.draw(g, pos=positions, node_size=30, with_labels=True, font_size=6, font_color='red')
         plt.show()
     comps = list(nx.connected_components(g))
+    if len(comps) > 2:
+        print(path)
+        print(comps)
     return len(edges), comps[0], comps[1]
 
 
@@ -1363,7 +1511,7 @@ def order_faces(graph, positions):
         row = mat[i]
         print(s_verts[i], end=': ')
         for x in row:
-            print(str(int(x/2))+', ', end='')
+            print(str(int(x / 2)) + ', ', end='')
         print()
     print(face_dict)
     exit()
@@ -1397,7 +1545,8 @@ def order_faces(graph, positions):
         inds = sorted(inds)
         for i in range(len(inds) - 1):
             if inds[i + 1] - inds[i] > 1:  # Bad face! Go to next? edge
-                cur_edge_index = (cur_edge_index + 3) % (len(cur_boundary) - 1) if pass_counter < len(outer_face)*20 else \
+                cur_edge_index = (cur_edge_index + 3) % (len(cur_boundary) - 1) if pass_counter < len(
+                    outer_face) * 20 else \
                     (cur_edge_index + 1) % (len(cur_boundary) - 1)
                 cont = True
         # Also make sure boundary remains as small as possible
@@ -1475,8 +1624,8 @@ def order_faces(graph, positions):
                     for k in range(len(cont_section_verts)):
                         if new_loc[-1][1] in cont_section_verts[(i + k) % len(cont_section_verts)]:
                             prev_ver[i] = prev_ver[i][:section_vert.index(new_loc[0][0])] + new_loc + \
-                                            prev_ver[(i + k) % len(prev_ver)][
-                                            cont_section_verts[(i + k) % len(prev_ver)].index(new_loc[-1][1]):]
+                                          prev_ver[(i + k) % len(prev_ver)][
+                                          cont_section_verts[(i + k) % len(prev_ver)].index(new_loc[-1][1]):]
                             prev_ver.pop((i + k) % len(prev_ver))
                             # cont_sections += [prev_ver[:i]] if i + k != len(cont_section_verts) else [prev_ver[1:i]]
                             # cont_sections[-1] += [prev_ver[i][:section_vert.index(new_loc[0][0])] + new_loc + \
@@ -1527,7 +1676,8 @@ def order_faces(graph, positions):
         sect_mem = 1
         for sect in sections:
             # sect_mem *= m_n[len(sect)] if len(sect) < len(m_n) else m_n[-1]
-            sect_mem *= sum([1/(d2+1) * (math.comb(2*d2, d2) * math.comb(len(sect), 2*d2)) for d2 in range(depth_bound+1)])
+            sect_mem *= sum([1 / (d2 + 1) * (math.comb(2 * d2, d2) * math.comb(len(sect), 2 * d2)) for d2 in
+                             range(depth_bound + 1)])
         print("{0}: {1}: {2}".format(c, '.'.join([str(len(sect)) for sect in sections]), sect_mem)) if debug else ""
         c += 1
         total_mem += sect_mem
@@ -1599,8 +1749,8 @@ def test():
         assert var == correct_vals[size] if size < len(correct_vals) else ""
 
 
-# 185650586758
-# 614358697
+# 319441873429731761612648
+# 58968945874956169986170552320
 if __name__ == '__main__':
     # m_n = [1, 1, 2, 4, 9, 21, 51, 127, 323, 835, 2188, 5798, 15511, 41835, 113634, 310572, 853467, 2356779, 6536382,
     #        18199284, 50852019, 142547559, 400763223, 1129760415, 3192727797, 9043402501, 25669818476, 73007772802,
@@ -1614,7 +1764,44 @@ if __name__ == '__main__':
     # for d in range(math.ceil(n/2)):
     #     print("Number of paths w/ depth = {0}: {1}".format(d, 1/(d+1) * (math.comb(2*d, d) * math.comb(n, 2*d))))
     # face_order = [[46,48,130], [40,117,46], [46,130,48,128,40], [128,41,40], [132,128,48], [48,127,132], [127,128,132], [41,128,45], [136,128,127], [126,128,136], [136,127,48], [122,124,136], [136,129,126], [136,124,126,129], [126,45,128], [126,44,45], [124,44,126], [122,43,139,124], [139,43,141,124], [141,43,124], [43,120,124], [120,44,124], [120,42,44], [44,42,45], [42,41,45], [122,131,43], [43,131,120], [120,131,42], [42,131,121], [42,121,131,41], [122,136,48], [122,48,134], [164,122,134,48], [164,131,122], [164,97,131], [164,98,97], [164,87,98], [87,86,98], [87,31,86], [87,96,31], [164,96,87], [164,95,96], [96,95,31], [164,102,95], [164,103,95,102], [164,89,95,103], [164,161,89], [89,94,95], [89,161,94], [164,90,161], [166,91,90], [90,168,161], [90,169,161,168], [90,91,169], [169,91,161], [161,91,93,94], [95,94,93], [95,93,30,31], [93,29,30], [30,29,31], [29,88,86,31], [88,85,86], [151,88,29], [78,29,155], [73,78,155], [156,29,78], [73,156,78], [79,29,156], [73,79,156], [157,29,79], [73,157,79], [80,29,157], [73,80,157], [158,29,80], [73,158,80], [70,29,158], [73,70,158], [71,70,73], [69,70,71], [159,70,69], [159,29,70], [68,29,159], [68,159,69], [153,29,68,76], [153,76,68], [67,153,68], [67,68,69], [67,29,153], [67,152,160,151,29], [67,77,160,152], [67,160,77], [67,151,160], [67,58,151], [58,57,151], [61,67,69], [61,69,62], [60,67,61], [60,58,67], [56,61,62], [56,59,60,61], [56,58,59], [59,58,60], [56,57,58], [56,53,57], [55,53,56], [54,53,55], [55,56,62], [55,62,64], [64,62,63], [64,63,65], [63,62,65], [62,144,65], [62,69,144], [65,144,66], [144,69,66], [66,69,71], [72,66,71], [74,73,75], [74,71,73]]
-    face_order = [[46,48,130], [46,130,48,128,40], [46,116,47,50], [46,47,116], [46,117,47], [46,40,117], [117,40,47], [128,41,40], [41,131,47,40], [131,52,50,47], [50,52,51], [51,52,106], [52,13,106], [11,13,52,22], [11,22,12], [22,52,23], [23,52,21], [21,52,131,97], [22,23,21], [12,22,35,104], [22,21,35], [35,21,97], [132,128,48], [48,127,132], [127,128,132], [41,128,45], [136,128,127], [126,128,136], [136,127,48], [122,124,136], [136,129,126], [136,124,126,129], [126,45,128], [126,44,45], [124,44,126], [122,43,139,124], [139,43,141,124], [141,43,124], [43,120,124], [120,44,124], [120,42,44], [44,42,45], [42,41,45], [42,121,131,41], [42,131,121], [120,131,42], [43,131,120], [122,131,43], [122,136,48], [122,48,134], [164,122,134,48], [164,131,122], [164,97,131], [164,98,97], [98,86,84,97], [84,35,97], [83,35,84], [85,83,84], [86,85,84], [151,83,85,88], [86,88,85], [82,35,83], [81,35,82], [82,83,53], [81,82,53], [54,81,53], [55,54,53], [53,83,57], [57,83,151], [151,88,29], [29,88,86,31], [87,31,86], [87,96,31], [87,86,98], [164,87,98], [164,96,87], [164,95,96], [96,95,31], [95,93,30,31], [30,29,31], [93,29,30], [55,53,56], [56,53,57], [56,57,58], [58,57,151], [56,58,59], [56,59,60,61], [59,58,60], [60,58,67], [60,67,61], [67,58,151], [67,151,160], [67,160,77], [67,77,160,152], [67,152,160,151,29], [67,29,153], [67,153,68], [153,76,68], [153,29,68,76], [67,68,69], [68,159,69], [68,29,159], [159,29,70], [159,70,69], [61,67,69], [61,69,62], [56,61,62], [55,56,62], [55,62,64], [64,62,63], [64,63,65], [63,62,65], [65,62,144], [62,69,144], [65,144,66], [144,69,66], [66,69,71], [72,66,71], [69,70,71], [164,102,95], [164,103,95,102], [164,89,95,103], [89,94,95], [95,94,93], [164,161,89], [89,161,94], [161,91,93,94], [91,92,93], [92,29,93], [164,90,161], [90,168,161], [90,169,161,168], [169,91,161], [90,91,169], [33,90,164], [33,165,90], [33,166,90,165], [166,91,90], [33,91,166], [33,92,91], [33,114,92], [177,29,92,115], [177,115,92], [114,177,92], [33,34,32,114], [34,112,32], [101,147,177,114], [101,177,147], [170,101,114,32], [37,170,32], [112,37,32], [112,36,37], [38,170,37], [36,38,37], [39,38,36], [112,39,36], [110,39,112], [110,38,39], [110,170,38], [146,101,170], [146,178,101], [146,179,101,178], [146,180,101,179], [146,154,176,177,101,180], [146,176,154], [146,173,177,176], [146,177,173], [155,29,177], [78,29,155], [73,78,155], [156,29,78], [73,156,78], [79,29,156], [73,79,156], [157,29,79], [73,157,79], [80,29,157], [73,80,157], [158,29,80], [73,158,80], [70,29,158], [73,70,158], [71,70,73], [146,73,155,177], [146,75,73], [146,149,75], [146,174,149], [174,182,149], [146,182,174], [146,171,182], [171,172,182], [182,172,149], [172,74,149], [149,74,75], [75,74,73], [74,71,73]]
+    # Unit test for find_motzkin_paths
+    # my_dict = {}
+    # find_motzkin_paths(0, '', 5, my_dict, 0, True)
+    # print(my_dict)
+    # exit(0)
+    face_order = [[46, 48, 130], [46, 130, 48, 128, 40], [46, 116, 47, 50], [46, 47, 116], [46, 117, 47], [46, 40, 117],
+                  [117, 40, 47], [128, 41, 40], [41, 131, 47, 40], [131, 52, 50, 47], [50, 52, 51], [51, 52, 106],
+                  [52, 13, 106], [11, 13, 52, 22], [11, 22, 12], [22, 52, 23], [23, 52, 21], [21, 52, 131, 97],
+                  [22, 23, 21], [12, 22, 35, 104], [22, 21, 35], [35, 21, 97], [132, 128, 48], [48, 127, 132],
+                  [127, 128, 132], [41, 128, 45], [136, 128, 127], [126, 128, 136], [136, 127, 48], [122, 124, 136],
+                  [136, 129, 126], [136, 124, 126, 129], [126, 45, 128], [126, 44, 45], [124, 44, 126],
+                  [122, 43, 139, 124], [139, 43, 141, 124], [141, 43, 124], [43, 120, 124], [120, 44, 124],
+                  [120, 42, 44], [44, 42, 45], [42, 41, 45], [42, 121, 131, 41], [42, 131, 121], [120, 131, 42],
+                  [43, 131, 120], [122, 131, 43], [122, 136, 48], [122, 48, 134], [164, 122, 134, 48], [164, 131, 122],
+                  [164, 97, 131], [164, 98, 97], [98, 86, 84, 97], [84, 35, 97], [83, 35, 84], [85, 83, 84],
+                  [86, 85, 84], [151, 83, 85, 88], [86, 88, 85], [82, 35, 83], [81, 35, 82], [82, 83, 53], [81, 82, 53],
+                  [54, 81, 53], [55, 54, 53], [53, 83, 57], [57, 83, 151], [151, 88, 29], [29, 88, 86, 31],
+                  [87, 31, 86], [87, 96, 31], [87, 86, 98], [164, 87, 98], [164, 96, 87], [164, 95, 96], [96, 95, 31],
+                  [95, 93, 30, 31], [30, 29, 31], [93, 29, 30], [55, 53, 56], [56, 53, 57], [56, 57, 58], [58, 57, 151],
+                  [56, 58, 59], [56, 59, 60, 61], [59, 58, 60], [60, 58, 67], [60, 67, 61], [67, 58, 151],
+                  [67, 151, 160], [67, 160, 77], [67, 77, 160, 152], [67, 152, 160, 151, 29], [67, 29, 153],
+                  [67, 153, 68], [153, 76, 68], [153, 29, 68, 76], [67, 68, 69], [68, 159, 69], [68, 29, 159],
+                  [159, 29, 70], [159, 70, 69], [61, 67, 69], [61, 69, 62], [56, 61, 62], [55, 56, 62], [55, 62, 64],
+                  [64, 62, 63], [64, 63, 65], [63, 62, 65], [65, 62, 144], [62, 69, 144], [65, 144, 66], [144, 69, 66],
+                  [66, 69, 71], [72, 66, 71], [69, 70, 71], [164, 102, 95], [164, 103, 95, 102], [164, 89, 95, 103],
+                  [89, 94, 95], [95, 94, 93], [164, 161, 89], [89, 161, 94], [161, 91, 93, 94], [91, 92, 93],
+                  [92, 29, 93], [164, 90, 161], [90, 168, 161], [90, 169, 161, 168], [169, 91, 161], [90, 91, 169],
+                  [33, 90, 164], [33, 165, 90], [33, 166, 90, 165], [166, 91, 90], [33, 91, 166], [33, 92, 91],
+                  [33, 114, 92], [177, 29, 92, 115], [177, 115, 92], [114, 177, 92], [33, 34, 32, 114], [34, 112, 32],
+                  [101, 147, 177, 114], [101, 177, 147], [170, 101, 114, 32], [37, 170, 32], [112, 37, 32],
+                  [112, 36, 37], [38, 170, 37], [36, 38, 37], [39, 38, 36], [112, 39, 36], [110, 39, 112],
+                  [110, 38, 39], [110, 170, 38], [146, 101, 170], [146, 178, 101], [146, 179, 101, 178],
+                  [146, 180, 101, 179], [146, 154, 176, 177, 101, 180], [146, 176, 154], [146, 173, 177, 176],
+                  [146, 177, 173], [155, 29, 177], [78, 29, 155], [73, 78, 155], [156, 29, 78], [73, 156, 78],
+                  [79, 29, 156], [73, 79, 156], [157, 29, 79], [73, 157, 79], [80, 29, 157], [73, 80, 157],
+                  [158, 29, 80], [73, 158, 80], [70, 29, 158], [73, 70, 158], [71, 70, 73], [146, 73, 155, 177],
+                  [146, 75, 73], [146, 149, 75], [146, 174, 149], [174, 182, 149], [146, 182, 174], [146, 171, 182],
+                  [171, 172, 182], [182, 172, 149], [172, 74, 149], [149, 74, 75], [75, 74, 73], [74, 71, 73]]
     enumerate_paths_with_order("data/exp2627neighb.dbf", "data/exp2627wards.shp", face_order, draw=False)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
