@@ -98,6 +98,7 @@ def count_non_int_paths(face_list, outer_boundary, cont_sections, k):
                 new_loc.append(named_edge)
                 if named_edge in prev_flattened_sections:  # Need to account for the autohealing in cont_sections
                     inds_to_add.append(prev_flattened_sections.index(named_edge))
+        label_inds = sorted(label_inds, reverse=True)
         # if len(set(new_loc[edge_ind-1]).intersection(set(new_loc[edge_ind]))) != 1:
         # Create mapping from paths in cur_dict to those in prev_dict using similar edges in flattened_sections
         trimmed_prev_flattened_sections = [x for x in prev_flattened_sections if x not in new_loc]
@@ -307,7 +308,7 @@ def count_non_int_paths(face_list, outer_boundary, cont_sections, k):
                 prev_rem = copy.deepcopy(to_rem)
         tree_size = sum(len(x) for x in sample_tree)
         # Tree is trimmed, just need to sample
-        if tree_size >= 54 or i == len(cont_sections):
+        if tree_size >= 3*22 or i == len(cont_sections):
             sample_paths, sample_tree = sample_from_tree(cur_dict, sample_paths, sample_tree)
         prev_dict = cur_dict
         prev_sect = cur_sect
@@ -317,9 +318,9 @@ def count_non_int_paths(face_list, outer_boundary, cont_sections, k):
 
 
 def sample_from_tree(cur_dict, sample_paths, sample_tree):
-    overhead = 2
+    overhead = 4
     new_sample_paths = [[] for x in range(len(cur_dict))]
-    offset = overhead if len(sample_paths[0][0]) > 1 else 0
+    offset = overhead if len(sample_paths[2]) > 1 else 0
     # Loop through each initial k > 0
     for cur_k in range(len(cur_dict)):
         # Loop through each path
@@ -332,7 +333,7 @@ def sample_from_tree(cur_dict, sample_paths, sample_tree):
                 ind = ind + offset
                 sampled_pair = sample_one(sample_path, sample_tree, ind, path_k)  # sample a step (with tracebacks!)
                 if sampled_pair is None:
-                    print("This path died at index {0}: {1}".format(ind, sample_path[-4:]))
+                    # print("This path died at index {0}: {1}".format(ind, sample_path[-4:]))
                     kill = True
                     break
                 sample_path, path_k = sampled_pair
@@ -1008,11 +1009,15 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
                      key=lambda x: len(x))
     cts = []
     efficiencies = []
+    pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
     k = 2
-    cont_sections, count, sample_paths = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k)
+    cont_sections, count, sample_paths, outer_boundary, h2 = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k)
+    outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
     for path in sample_paths[k]:
-        ct, g1, g2 = eval_path(path, cont_sections, copy.deepcopy(g), positions, draw=True, draw2=False)
+        ct, g1, g2 = eval_path(path, cont_sections, copy.deepcopy(h2), positions, face_order, outer_boundary, draw=False, draw2=False)
+        if g1 == g2:
+            continue
         sum1 = 0
         sum2 = 0
         for v in g1:
@@ -1027,6 +1032,7 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
         # print("{0}, {1}".format(sum1, sum2))
         efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
         cts.append(ct)
+        pops.append(abs(sum1 - sum2))
     print("Found {0} possible partitions".format(len(efficiencies)))
     print("Path length distribution: Mean {0} with variance {1}, shortest path {2}".format(np.mean(cts), np.std(cts),
                                                                                            np.min(cts)))
@@ -1034,11 +1040,12 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
     print("Efficiency gap distribution: Sampled {2} with mean {0} with variance {1}".format(np.mean(efficiencies),
                                                                                             np.std(efficiencies),
                                                                                             len(efficiencies)))
+    print("Path lengths: {0}\n Population gaps: {1}".format(cts, pops))
     sum1 = 0
     sum2 = 0
     g1 = []
     g2 = []
-    for v in g.nodes:
+    for v in h2.nodes:
         if loc_df.loc[v]['DISTRICT'] == '27':
             # sum1 += loc_df.loc[v]['PERSONS'] - loc_df.loc[v]['WHITE']
             sum1 += loc_df.loc[v]['PERSONS']
@@ -1049,6 +1056,7 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
             g2.append(v)
     # print("True diversity was: " + str(math.fabs(sum2 - sum1)))
     print("True efficiency gap was: " + str(calculate_eff_gap(g1, g2, loc_df, sum1, sum2)))
+    print("True pop gap was: " + str(abs(sum2 - sum1)))
     print("Finish time: " + str(time.time()))
     return count
 
@@ -1146,7 +1154,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     # count = count_non_int_paths_w_table(table, edge_dict)
     count, sample_paths = count_non_int_paths(face_list, start_boundary_list, cont_sections, num_distr)
     print("Counted " + str(count) + " non-self-intersecting paths")
-    return cont_sections, count, sample_paths
+    return cont_sections, count, sample_paths, start_boundary_list, h2
 
 
 def create_face_order(exits, face_order, positions, start_boundary_list):
@@ -1405,15 +1413,23 @@ def calculate_eff_gap(g1, g2, loc_df, sum1, sum2):
     return ((dem_waste1 - rep_waste1) / sum1 + (dem_waste2 - rep_waste2) / sum2) / 2
 
 
-def eval_path(path, cont_sections, g, positions, draw=False, draw2=True):
+def eval_path(path, cont_sections, g, positions, face_list, outer_face, draw=False, draw2=True):
     edges = set()
+    prev_ones = 0
     for i in range(len(path)):
         assignment = path[-i - 1]
+        cur_ones = assignment.count('1')
         sect = cont_sections[i]
         flat_sect = [x for j in range(len(sect)) for x in sect[j]]
+        if abs(cur_ones - prev_ones) == 1:
+            face = face_list[i-1]
+            face_edges = {tuple(sorted([face[z], face[(z+1) % len(face)]])) for z in range(len(face))}
+            # We have an exit edge on the outside boundary of the face corresponding to this step
+            edges = edges.union(face_edges.intersection(set(outer_face)))
         edges = edges.union(set([flat_sect[i] for i in range(len(assignment)) if assignment[i] != '0']))
         edges = edges.union(
             set([(flat_sect[i][1], flat_sect[i][0]) for i in range(len(assignment)) if assignment[i] != '0']))
+        prev_ones = cur_ones
     if draw:
         plt.figure(figsize=(18, 18))
         edge_col = [('red' if e in edges else 'black') for e in g.edges]
@@ -1428,9 +1444,10 @@ def eval_path(path, cont_sections, g, positions, draw=False, draw2=True):
         # nx.draw(g, pos=positions, node_size=30, with_labels=True, font_size=6, font_color='red')
         plt.show()
     comps = list(nx.connected_components(g))
-    if len(comps) > 2:
+    if len(comps) > 2 or len(comps) == 1:
         print(path)
         print(comps)
+        return len(edges), "", ""
     return len(edges), comps[0], comps[1]
 
 
