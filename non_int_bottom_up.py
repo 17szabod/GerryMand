@@ -1415,6 +1415,7 @@ def calculate_eff_gap(g1, g2, loc_df, sum1, sum2):
 
 def eval_path(path, cont_sections, g, positions, face_list, outer_face, draw=False, draw2=True):
     edges = set()
+    outer_edges = set(outer_face)
     prev_ones = 0
     for i in range(len(path)):
         assignment = path[-i - 1]
@@ -1422,17 +1423,19 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, draw=Fal
         sect = cont_sections[i]
         flat_sect = [x for j in range(len(sect)) for x in sect[j]]
         if abs(cur_ones - prev_ones) == 1:
-            face = face_list[i-1]
+            face = face_list[i]
             face_edges = {tuple(sorted([face[z], face[(z+1) % len(face)]])) for z in range(len(face))}
             # We have an exit edge on the outside boundary of the face corresponding to this step
-            edges = edges.union(face_edges.intersection(set(outer_face)))
+            exits = face_edges.intersection(outer_edges)
+            edges = edges.union(exits)
+            edges = edges.union({(e[1], e[0]) for e in exits})
         edges = edges.union(set([flat_sect[i] for i in range(len(assignment)) if assignment[i] != '0']))
         edges = edges.union(
             set([(flat_sect[i][1], flat_sect[i][0]) for i in range(len(assignment)) if assignment[i] != '0']))
         prev_ones = cur_ones
     if draw:
         plt.figure(figsize=(18, 18))
-        edge_col = [('red' if e in edges else 'black') for e in g.edges]
+        edge_col = [('red' if tuple(sorted(e)) in edges else 'black') for e in g.edges]
         nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
                 width=.2, edge_color=edge_col)
         plt.show()
