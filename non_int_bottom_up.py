@@ -16,6 +16,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
+import generate_face_order
 
 debug = False
 depth_bound = 4
@@ -990,6 +991,34 @@ def ensure_cw(face, positions):
         return [face[(min_x_ind - x) % len(face)] for x in range(len(face))]
 
 
+# Order and orient each face within face_order in place by traversing each face in g
+def orient_faces(face_order, g, positions, start_edge):
+    for i in range(len(face_order)):
+        f = face_order[i]
+        done = False
+        for x in range(len(f)):
+            for y in range(x+1, len(f)):
+                if f[y] in g[f[x]]: # These two vertices of f are connected
+                    if generate_face_order.same_face(g.traverse_face(f[x], f[y]), f):
+                        face_order[i] = g.traverse_face(f[x], f[y])
+                        done = True
+                        break
+                    elif generate_face_order.same_face(g.traverse_face(f[y], f[x]), f):
+                        face_order[i] = g.traverse_face(f[y], f[x])
+                        done = True
+                        break
+            if done:
+                break
+    # Orient each face in face_order:
+    for i in range(len(face_order)):
+        face = ensure_cw(face_order[i], positions)
+        face_order = face_order[:i] + [face] + face_order[i + 1:]
+    # Make sure initial face adheres to the starting edge
+    if face_order[0][0] != start_edge[1]:
+        face_order[0] = [face_order[0][(x + face_order[0].index(start_edge[1])) % len(face_order[0])] for x in range(len(face_order[0]))]
+    return face_order
+
+
 # Helper function to insert str2 into str1 at locations given by indices
 def insert_at_indices(str1, str2, indices):
     offset = 0
@@ -1265,21 +1294,34 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
                 width=.2)
         plt.show()
         # exit()
+
+    face_order = generate_face_order.order_faces(h2, start_edge, positions)
+    face_order = orient_faces(face_order, h2, positions, start_edge)
     # Test that face_order faces actually exist
-    for face in face_order:
-        oface = ensure_cw(face, positions)
-        sedges = [(face[i], face[(i + 1) % len(face)]) for i in range(len(face))]
-        oedges = [(oface[i], oface[(i + 1) % len(oface)]) for i in range(len(oface))]
-        for f in sedges:
-            if f not in oedges:
-                print("This face is oriented incorrectly: " + str(face) + ", not like " + str(oface))
-                break
-    for face in face_order:
-        # f_set = [[face[(i+k)%len(face)] for i in range(len(face))] for k in range(len(face))]
+    # for face in face_order:
+    #     oface = ensure_cw(face, positions)
+    #     sedges = [(face[i], face[(i + 1) % len(face)]) for i in range(len(face))]
+    #     oedges = [(oface[i], oface[(i + 1) % len(oface)]) for i in range(len(oface))]
+    #     for f in sedges:
+    #         if f not in oedges:
+    #             print("This face is oriented incorrectly: " + str(face) + ", not like " + str(oface))
+    #             break
+    to_rem = []
+    for i in range(len(face_order)):
+        face = face_order[i]
         f_set = set(face)
         d_sets = [set(f) for f in face_dict.values()]
         if f_set not in d_sets:
             print("This face was in face_order but not in dict: " + str(face))
+            to_rem.append(i)
+        if np.count_nonzero([generate_face_order.same_face(y, face) for y in face_order]) > 1:
+            prev_inds = [y for y in to_rem if generate_face_order.same_face(face_order[y], face)]
+            if len(prev_inds) > 0:
+                to_rem.remove(prev_inds[0])
+            to_rem.append(i)
+    to_rem = [face_order[i] for i in to_rem]
+    for face in to_rem:
+        face_order.remove(face)
     for face in face_dict.values():
         f_set = set(face)
         d_sets = [set(f) for f in face_order]
@@ -1318,7 +1360,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
             # sect_mem *= m_n[len(sect)] if len(sect) < len(m_n) else m_n[-1]
             sect_mem *= sum([1 / (d2 + 1) * (math.comb(2 * d2, d2) * math.comb(len(sect), 2 * d2)) for d2 in
                              range(depth_bound + 1)])
-        print("{0}: {1}: {2}".format(c, '.'.join([str(len(sect)) for sect in sections]), sect_mem)) if debug else ""
+        print("{0}: {1}: {2}".format(c, '.'.join([str(len(sect)) for sect in sections]), sect_mem))
         c += 1
         total_mem += sect_mem
     print("Will be using approximately {0} entries.".format(total_mem))
@@ -1346,11 +1388,37 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
     cont_sections = []
     face_list = []
     cur_boundary = copy.deepcopy(start_boundary_list)
-    for face in face_order:
+    # A solution to incorrect face traversals is using a wait queue. This takes impossible faces, adds them to a queue,
+    # and inserts them whenever they become possible
+    wait_queue = []
+    face_order_index = 0
+    while face_order_index < len(face_order) or len(wait_queue) > 0:
+        if len(cont_sections) > 0 and cont_sections[-1] == [[(110, 38), (38, 170), (170, 32), (32, 112)]]:
+            print("")
+        face = face_order[face_order_index] if face_order_index < len(face_order) else None
+        face_order_index += 1
+        for q_face in wait_queue:
+            # Check if face can now be added
+            if any((q_face[x], q_face[(x+1) % len(q_face)]) in cur_boundary for x in range(len(q_face))) and\
+                    np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) - \
+                    np.count_nonzero([(q_face[x], q_face[(x + 1) % len(q_face)]) in cur_boundary for x in range(len(q_face))]) <= 2:
+                face = q_face
+                face_order_index -= 1
+                wait_queue.remove(q_face)
+                break
+            elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0:
+                # Some faces are filled in from things around them-- this means everything is okay, just remove it from the queue
+                wait_queue.remove(q_face)
+        if face is None:
+            raise BaseException("Failed to generate a valid traversal.")
         print(face) if debug else ""
-        # if face == [72,66,71]:
-        #     print('h')
         print(cur_boundary) if debug else ""
+        if not any((face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))) or\
+                np.count_nonzero([[any([face[x] in e for x in range(len(face))]) for e in cur_boundary]]) - \
+                np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) > 2:
+            # Algorithm messed up, add to queue-- the second condition checks for closed loops
+            wait_queue.append(face)
+            continue
         face = list(reversed(face))
         # Set up vertices in boundary
         boundary_verts = [x[0] for x in cur_boundary] + [cur_boundary[-1][1]]
@@ -1388,12 +1456,21 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
         if len(new_loc) > 1:  # need to find where to start the new locations
             start_ind = 0
             for i in range(len(new_loc)):
-                if len(set(new_loc[i]).intersection(set(cur_boundary[index - 1]))) > 0:
+                this_loc = set(new_loc[i])
+                prev_loc = set(new_loc[(i - 1) % len(new_loc)])
+                start_spot = set(cur_boundary[index - 1]) if index > 0 else None
+                end_spot = set(cur_boundary[index]) if index < len(cur_boundary) else None
+                # Put prev_loc and this_loc between start_spot and end_spot if it fits
+                if start_spot is not None and len(this_loc.intersection(start_spot)) > 0:
                     start_ind = i
-                    if len(set(new_loc[i]).intersection(set(cur_boundary[index - 1]))) == 1 and len(
-                            set(new_loc[(i - 1) % len(new_loc)]).intersection(set(cur_boundary[index]))) == 1:
+                    if len(this_loc.intersection(start_spot)) == 1 and end_spot is not None and len(prev_loc.intersection(end_spot)) == 1:
                         print("Found good rotation: " + str(new_loc)) if debug else ""
                         break
+                    elif end_spot is None and len(this_loc.intersection(start_spot)) == 1:
+                        break
+                elif start_spot is None:
+                    start_ind = i
+                    break
             new_loc = [new_loc[(x + start_ind) % len(new_loc)] for x in range(len(new_loc))]
         # Find which parts of cont_sections new_loc matches with
         # Need to merge sections/ remove them
@@ -1568,7 +1645,8 @@ def clean_graph(exit_edge, face_dict, g, positions, start_boundary_labels, start
     for f in face_dict.values():
         verts_left = verts_left.union(set(f))
     # verts_left = verts_left.union()
-    h2 = g.subgraph(list(verts_left)).copy()
+    h2 = generate_face_order.make_subgraph(g, list(verts_left))
+    # h2 = g.subgraph(list(verts_left)).copy()
     return start_boundary_list, h2
 
 
