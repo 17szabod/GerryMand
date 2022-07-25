@@ -11,12 +11,15 @@ import copy
 import gc
 import itertools
 import math
+import os
+import random
 import time
 import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
 import generate_face_order
+import poly_point_isect
 
 debug = False
 depth_bound = 4
@@ -1048,7 +1051,7 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
         g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
     loc_df = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
     loc_df['centroid_column'] = loc_df.centroid
-    centers = loc_df.set_geometry('centroid_column')
+    # centers = loc_df.set_geometry('centroid_column')
     # centers.set_index('OBJECTID', inplace=True)
     # print(centers)
     h = nx.DiGraph(incoming_graph_data=g_data)
@@ -1135,39 +1138,84 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     print(order_faces(g, positions))
 
 
-def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
+def enumerate_paths_with_order(shapefile, face_order, draw=True):
     print("Start time: " + str(time.time()))
-    df = gpd.read_file(adj_file)
-    np_df = df.to_numpy()
-    g_data = collections.defaultdict(list)
-    for i in range(len(np_df)):
-        g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
-    loc_df = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
-    # loc_df['centroid_column'] = loc_df.centroid
-    # centers = loc_df.set_geometry('centroid_column')
-    # centers.set_index('OBJECTID', inplace=True)
-    # print(centers)
-    h = nx.DiGraph(incoming_graph_data=g_data)
-    # y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
-    # stddev = np.std(np.asanyarray(list(y_locs.values())))
-    # center = np.mean(
-    #     np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
-    # new_verts = [x for x in h.nodes if math.fabs(y_locs[x] - center) < stddev / 2.25]
-    # h2 = h.subgraph(new_verts).copy()
-    # g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
-    while True:
-        to_remove = []
-        for v, neighbs in g_data.items():
-            if len(neighbs) == 1:
-                to_remove.append(v)
-        if len(to_remove) == 0:
-            break
-        print(to_remove)
-        for v in to_remove:
-            g_data[g_data[v][0]].remove(v) if len(g_data[v]) > 0 else ""
-            g_data.pop(v)
-    positions = nx.planar_layout(h)
-    g = nx.PlanarEmbedding()
+    root = shapefile[:shapefile.index(".")]
+    if os.path.exists(root + ".adjlist"):
+        h = nx.read_adjlist(root + ".adjlist", nodetype=int)
+        success, g = nx.check_planarity(h, counterexample=True)
+        positions = nx.planar_layout(g)
+    else:
+        # df = gpd.read_file("data/exp2627neighb.dbf")
+        # np_df = df.to_numpy()
+        # g_data = collections.defaultdict(list)
+        # for i in range(len(np_df)):
+        #     g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
+        # Explode the geometries
+        gdf = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
+        gdf.explode(ignore_index=True)
+        gdf.to_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
+        g_data = adjacency_from_shp(shapefile)
+        loc_df = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
+        # loc_df['centroid_column'] = loc_df.centroid
+        # centers = loc_df.set_geometry('centroid_column')
+        # centers.set_index('OBJECTID', inplace=True)
+        # print(centers)
+        h = nx.DiGraph(incoming_graph_data=g_data)
+        # y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
+        # stddev = np.std(np.asanyarray(list(y_locs.values())))
+        # center = np.mean(
+        #     np.asanyarray([y_locs[exit_edge[0]], y_locs[exit_edge[1]], y_locs[start_edge[0]], y_locs[start_edge[0]]]))
+        # new_verts = [x for x in h.nodes if math.fabs(y_locs[x] - center) < stddev / 2.25]
+        # h2 = h.subgraph(new_verts).copy()
+        # g_data = {x: [y for y in g_data[x] if y in new_verts] for x in new_verts}
+        while True:
+            to_remove = []
+            for v, neighbs in g_data.items():
+                if len(neighbs) == 1:
+                    to_remove.append(v)
+            if len(to_remove) == 0:
+                break
+            print(to_remove)
+            for v in to_remove:
+                g_data[g_data[v][0]].remove(v) if len(g_data[v]) > 0 else ""
+                g_data.pop(v)
+        success, counterexample = nx.check_planarity(h, counterexample=True)
+        while not success:
+            # spring layouts look somewhat normal-- we cannot get a near planar layout, because that can only be built from
+            # planar graphs
+            some_layout = nx.spring_layout(counterexample)
+            # Use the Bentley-Ottman algorithm to find bad edges
+            cross_edges = find_intersecting_edges(counterexample, some_layout)
+            rev_cross_edges = list([(e[1], e[0]) for e in cross_edges])
+            # Remove bad edges
+            h.remove_edges_from(cross_edges + rev_cross_edges)
+            for start, stop in cross_edges + rev_cross_edges:
+                g_data[start].remove(stop)  # need to adjust g_data as well
+            print("Removing edges {0} to make planar".format(cross_edges))
+            # nx.draw(counterexample, pos=some_layout, with_labels=True)
+            # plt.show()
+            success, counterexample = nx.check_planarity(h, counterexample=True)
+
+        g = counterexample
+        positions = nx.planar_layout(g)
+        # Remove any newly created islands or dangling edges
+        while True:
+            to_remove = []
+            for v in g:
+                if len(g[v]) <= 1:
+                    to_remove.append(v)
+            if len(to_remove) == 0:
+                break
+            print(to_remove)
+            g.remove_nodes_from(to_remove)
+            # for v in to_remove:
+            #     g_data[g_data[v][0]].remove(v) if len(g_data[v]) > 0 else ""
+            #     g_data.pop(v)
+        # graph is good: save it if it hasn't been saved
+        if not os.path.exists(root + ".adjlist"):
+            nx.write_adjlist(g, root+".adjlist")
+        # g = nx.PlanarEmbedding()
 
     # Sort angles w/o computing atan2, slightly faster for a computationally insignificant portion:
     # Input:  dx, dy: coordinates of a (difference) vector.
@@ -1184,16 +1232,28 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
         else:
             return 1 - p  # 0 .. 2 decreasing with x
 
-    oriented_g_data = {}
-    for v, neighbs in g_data.items():
-        # Sort neighbors by orientation of vectors
-        # vect2 = np.array([centers.loc[v]['centroid_column'].x,
-        #                   centers.loc[v]['centroid_column'].y]).flatten()
-        vect2 = np.array(positions[v])
-        new_neighb = sorted(neighbs, key=lambda x: pseudoangle(x, vect2), reverse=True)
-        # print("{0}: {1}".format(v, new_neighb))
-        oriented_g_data[v] = new_neighb
-    g.set_data(oriented_g_data)
+    # oriented_g_data = {}
+    # for v, neighbs in g_data.items():
+    #     # Sort neighbors by orientation of vectors
+    #     # vect2 = np.array([centers.loc[v]['centroid_column'].x,
+    #     #                   centers.loc[v]['centroid_column'].y]).flatten()
+    #     vect2 = np.array(positions[v])
+    #     new_neighb = sorted(neighbs, key=lambda x: pseudoangle(x, vect2), reverse=True)
+    #     # print("{0}: {1}".format(v, new_neighb))
+    #     oriented_g_data[v] = new_neighb
+    # g.set_data(oriented_g_data)
+    if draw:
+        # ax = plt.subplot(121)
+        # plt.sca(ax)
+        plt.figure(figsize=(25, 25))
+        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+                width=.2)
+        # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
+        # nx.draw(G2, pos=positions, with_labels=True)
+        # centers.plot()
+        # loc_df.plot()
+        plt.show()
+        exit()
     success, counterexample = nx.check_planarity(g, counterexample=True)
     if not success:
         nx.draw(counterexample, pos=positions, with_labels=True)
@@ -1202,6 +1262,7 @@ def enumerate_paths_with_order(adj_file, shapefile, face_order, draw=True):
         exit(0)
     g.check_structure()
 
+    # start the algorithm!
     exit_edge = (71, 74)
     start_edge = (46, 48)
     outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
@@ -1498,6 +1559,12 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
         if len(cont_sections) == 0:  # special first-time setup
             cont_sections.append([new_loc])
         elif len(new_loc) == 0:  # Another special case, just remove appropriate edges
+            if face_order_index == len(face_order) and len(wait_queue) == 0:
+                # for some reason suddenly failed, just fix last step
+                cont_sections.append([[]])
+                face = ensure_ccw(face, positions)
+                face_list.append(face)
+                break
             offset = 0
             for j in range(len(prev_ver)):
                 for i in range(len(face)):
@@ -2046,6 +2113,41 @@ def test():
         assert var == correct_vals[size] if size < len(correct_vals) else ""
 
 
+# https://gis.stackexchange.com/questions/281652/finding-all-neighbors-using-geopandas
+def adjacency_from_shp(shapefile):
+    # open file
+    gdf = gpd.read_file(shapefile)
+    g_data = collections.defaultdict(list)
+    for index, precinct in gdf.iterrows():
+        # get 'not disjoint' countries
+        neighbors = gdf[~gdf.geometry.disjoint(precinct.geometry)].OBJECTID.keys().tolist()
+        # remove own name of the country from the list
+        neighbors = [name for name in neighbors if index != name]
+        g_data[index] = neighbors
+    return g_data
+
+
+# Makes an input graph planar by finding all intersection points of edges, and deleting one of the intersecting edges
+# Uses an implementation of Bentley-Ottmann from https://github.com/ideasman42/isect_segments-bentley_ottmann
+def find_intersecting_edges(g, positions):
+    points = []
+    for e in g.edges:
+        if (tuple(positions[e[1]]), tuple(positions[e[0]])) not in points:
+            points.append((tuple(positions[e[0]]), tuple(positions[e[1]])))
+    inters = poly_point_isect.isect_segments_include_segments(points)
+    inter_verts = []
+    rev_positions = {}
+    for vert, pos in positions.items():
+        rev_positions[tuple(pos)] = vert
+    for inter in inters:
+        to_add1 = (rev_positions[inter[1][0][0]], rev_positions[inter[1][0][1]])
+        to_add2 = (rev_positions[inter[1][1][0]], rev_positions[inter[1][1][1]])
+        if to_add1 in inter_verts or to_add2 in inter_verts:
+            continue
+        inter_verts.append(to_add1)  # arbitrary
+    return inter_verts
+
+
 # 319441873429731761612648
 # 58968945874956169986170552320
 if __name__ == '__main__':
@@ -2099,7 +2201,10 @@ if __name__ == '__main__':
                   [158, 29, 80], [73, 158, 80], [70, 29, 158], [73, 70, 158], [71, 70, 73], [146, 73, 155, 177],
                   [146, 75, 73], [146, 149, 75], [146, 174, 149], [174, 182, 149], [146, 182, 174], [146, 171, 182],
                   [171, 172, 182], [182, 172, 149], [172, 74, 149], [149, 74, 75], [75, 74, 73], [74, 71, 73]]
-    enumerate_paths_with_order("data/exp2627neighb.dbf", "data/exp2627wards.shp", face_order, draw=False)
+    # adjacency_from_shp("data/exp2627wards.shp")
+    random.seed(123456)
+    np.random.seed(123456)
+    enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
     # out_dict = {}
