@@ -1364,6 +1364,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         c += 1
         total_mem += sect_mem
     print("Will be using approximately {0} entries.".format(total_mem))
+    print("The maximum length kappa of a frontier is {0}".format(max([len(x[0]) for x in cont_sections if len(x) > 0])))
     # exit(0)
     print(face_list)
     print("Starting table allocation and edge map creation.")
@@ -1393,8 +1394,10 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
     wait_queue = []
     face_order_index = 0
     while face_order_index < len(face_order) or len(wait_queue) > 0:
-        if len(cont_sections) > 0 and cont_sections[-1] == [[(110, 38), (38, 170), (170, 32), (32, 112)]]:
-            print("")
+        # if len(cont_sections) > 0 and cont_sections[-1] == [[(110, 38), (38, 170), (170, 32), (32, 112)]]:
+        #     print("")
+        # Set up vertices in boundary
+        boundary_verts = [x[0] for x in cur_boundary] + [cur_boundary[-1][1]]
         face = face_order[face_order_index] if face_order_index < len(face_order) else None
         face_order_index += 1
         for q_face in wait_queue:
@@ -1406,7 +1409,8 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
                 face_order_index -= 1
                 wait_queue.remove(q_face)
                 break
-            elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0:
+            elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0 and\
+                not generate_face_order.vert_in_face(q_face[0], boundary_verts, positions):
                 # Some faces are filled in from things around them-- this means everything is okay, just remove it from the queue
                 wait_queue.remove(q_face)
         if face is None:
@@ -1420,8 +1424,6 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
             wait_queue.append(face)
             continue
         face = list(reversed(face))
-        # Set up vertices in boundary
-        boundary_verts = [x[0] for x in cur_boundary] + [cur_boundary[-1][1]]
         # Make sure orientation of face is good
         m_ind = 0  # Index of the maximum vertex in the face that leaves the current boundary
         for i in range(len(face)):
@@ -1444,6 +1446,12 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
             else:
                 # Can't just do this, want the original order and need cont_section to just make a new section
                 new_loc.append((edge[1], edge[0]))
+        if len(set(cur_boundary).intersection(set(start_boundary_list))) == 0 and face_order_index != len(face_order):  # We circled inside!
+            # flip the order of the rest of face_order and reset the problem
+            face_order_index -= 1
+            face_order = face_order[:face_order_index] + list(reversed(face_order[face_order_index:]))
+            cur_boundary = [(boundary_verts[z], boundary_verts[z+1]) for z in range(len(boundary_verts)-1)]
+            continue
         # Make sure new_loc follows the order of boundary:
         # swapped = True
         # swapped = len(cur_boundary) > 0 and len(new_loc) > 0 and \

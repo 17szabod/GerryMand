@@ -64,8 +64,7 @@ def vert_in_face_mtpltlib(v, face, positions):
 # @param g_copy: The input graph g. this will be copied into a new graph that can change, but we still need to access it
 # @param edge: The edge to start the traversal with
 # @param positions: the position dictionary of every node in g and maybe more
-# @param parent_outer: the edges (both directions) of the outer face of the calling method that the traversal must end on
-def order_faces(g_copy, edge, positions, parent_outer):
+def order_faces(g_copy, edge, positions):
     g = copy.deepcopy(g_copy)  # The graph to be modified in each iteration
     g_prime = copy.deepcopy(g)  # The version of g with outer edges removed
     # outer_face = max([g.traverse_face(*edge), g.traverse_face(edge[1], edge[0])], key=lambda x: len(x))
@@ -90,14 +89,13 @@ def order_faces(g_copy, edge, positions, parent_outer):
                     for e in g2.edges:
                         if np.any(e[0] in b or e[1] in b for b in bridges):  # must hold for some edge
                             new_edge = e  # may have a counterexample where we break contiguity!!
-                # next_outer = copy.deepcopy(outer_face_edges)
-                next_outer = list([e for e in outer_face_edges + rev_outer_face_edges if e in g2.edges])
-                next_outer.remove(new_edge)
-                next_outer.remove((new_edge[1], new_edge[0]))
-                if len(set(next_outer).intersection(set(parent_outer))) == 0:
-                    # Would fail to end on the parent's outer face, jump edges-- any other edge would work
-                    new_edge = outer_face_edges[(outer_face_edges.index(edge) + len(outer_face_edges)/2) % len(outer_face_edges)] if edge in outer_face_edges else rev_outer_face_edges[(rev_outer_face_edges.index(edge) + len(rev_outer_face_edges)/2) % len(rev_outer_face_edges)]
-                local_traversal += order_faces(g2, new_edge, positions, next_outer)
+                # next_outer = list([e for e in outer_face_edges + rev_outer_face_edges if e in g2.edges])
+                # next_outer.remove(new_edge)
+                # next_outer.remove((new_edge[1], new_edge[0]))
+                # if len(set(next_outer).intersection(set(parent_outer))) == 0:
+                #     # Would fail to end on the parent's outer face, jump edges-- any other edge would work
+                #     new_edge = outer_face_edges[(outer_face_edges.index(edge) + len(outer_face_edges)/2) % len(outer_face_edges)] if edge in outer_face_edges else rev_outer_face_edges[(rev_outer_face_edges.index(edge) + len(rev_outer_face_edges)/2) % len(rev_outer_face_edges)]
+                local_traversal += order_faces(g2, new_edge, positions)
         return local_traversal
 
     g_prime.remove_edges_from(outer_face_edges)
@@ -172,7 +170,8 @@ def order_faces(g_copy, edge, positions, parent_outer):
             u_offset = 0
         if u % len(outer_face) <= v % len(outer_face):
             # Finished traversing, induct on whatever is left
-            e = (outer_face[prev_u], outer_face[(prev_u-1) % len(outer_face)]) if prev_u != u else (outer_face[prev_v], outer_face[(prev_v+1) % len(outer_face)])
+            # e = (outer_face[prev_u], outer_face[(prev_u-1) % len(outer_face)]) if prev_u != u else (outer_face[prev_v], outer_face[(prev_v+1) % len(outer_face)])
+            e = (prev_p[math.floor(len(prev_p) / 2)], prev_p[math.floor(len(prev_p) / 2) + 1])  # prev_p connects
             if g_copy == g:  # we have not made a single step, just step on some face and induct
                 return step_one_face(edge, g, outer_face, positions)
             return traversal + order_faces(g, e, positions)
@@ -185,7 +184,8 @@ def order_faces(g_copy, edge, positions, parent_outer):
                     v = (v + 1) % len(outer_face)
                 if u % len(outer_face) <= v % len(outer_face):
                     # Finished traversing, induct on whatever is left
-                    e = (outer_face[prev_u], outer_face[(prev_u-1) % len(outer_face)]) if prev_u != u else (outer_face[prev_v], outer_face[(prev_v+1) % len(outer_face)])
+                    # e = (outer_face[prev_u], outer_face[(prev_u-1) % len(outer_face)]) if prev_u != u else (outer_face[prev_v], outer_face[(prev_v+1) % len(outer_face)])
+                    e = (prev_p[math.floor(len(prev_p)/2)], prev_p[math.floor(len(prev_p)/2) + 1])  # prev_p connects
                     if g_copy == g:  # we have not made a single step, just step on some face and induct
                         return step_one_face(edge, g, outer_face, positions)
                     return traversal + order_faces(g, e, positions)
@@ -198,7 +198,8 @@ def order_faces(g_copy, edge, positions, parent_outer):
                     u = (u - 1) % len(outer_face)
                 if u % len(outer_face) <= v % len(outer_face):
                     # Finished traversing, induct on whatever is left
-                    e = (outer_face[prev_u], outer_face[(prev_u-1) % len(outer_face)]) if prev_u != u else (outer_face[prev_v], outer_face[(prev_v+1) % len(outer_face)])
+                    # e = (outer_face[prev_u], outer_face[(prev_u-1) % len(outer_face)]) if prev_u != u else (outer_face[prev_v], outer_face[(prev_v+1) % len(outer_face)])
+                    e = (prev_p[math.floor(len(prev_p)/2)], prev_p[math.floor(len(prev_p)/2) + 1])  # prev_p connects
                     if g_copy == g:  # we have not made a single step, just step on some face and induct
                         return step_one_face(edge, g, outer_face, positions)
                     return traversal + order_faces(g, e, positions)
@@ -479,28 +480,28 @@ def order_faces(g_copy, edge, positions, parent_outer):
 
 
 # The above algorithm does not work well for certain degenerate cases, this manually adds edge's face to the traversal
-def step_one_face(edge, g, outer_face, positions, parent_outer):
+def step_one_face(edge, g, outer_face, positions):
     outer_face_edges = [(outer_face[i], outer_face[(i + 1) % len(outer_face)]) for i in range(len(outer_face))]
     rev_outer_face_edges = [(outer_face[(i + 1) % len(outer_face)], outer_face[i]) for i in range(len(outer_face))]
     f1 = g.traverse_face(*edge)
     f2 = g.traverse_face(edge[1], edge[0])
     g2 = remove_planar_edges(g, [edge])
-    next_outer = list([e for e in outer_face_edges + rev_outer_face_edges if e in g2.edges])
-    next_outer.remove(edge)
+    # next_outer = list([e for e in outer_face_edges + rev_outer_face_edges if e in g2.edges])
+    # next_outer.remove(edge)
     if same_face(f1, outer_face):  # Could be optimized
         for i in range(1, len(outer_face)):  # Loops through edges starting at edge[1]
             if not same_face(g.traverse_face(outer_face[i], outer_face[i-1]), f2):  # take this edge
-                offset = 0
-                if len(set(next_outer).intersection(set(parent_outer))) == 0:
-                    # Would fail to end on the parent's outer face, jump edges-- any other edge would work
-                    offset = len(outer_face_edges) / 2
+                # offset = 0
+                # if len(set(next_outer).intersection(set(parent_outer))) == 0:
+                #     # Would fail to end on the parent's outer face, jump edges-- any other edge would work
+                #     offset = len(outer_face_edges) / 2
                 if not all([x in outer_face for x in f2]):  # Better to step in then keep going around?
                     in_verts = [x for x in f2 if x not in outer_face]
                     neighb = f2[(f2.index(in_verts[0]) - 1) % len(f2)]
                     if g2.in_degree(neighb) < 2:  # would be a bridge edge contradicting traversal reqs
                         neighb = f2[(f2.index(in_verts[0]) + 1) % len(f2)]
                     return [f2] + order_faces(g2, (neighb, in_verts[0]), positions)
-                return [f2] + order_faces(g2, (outer_face[(i+offset) % len(outer_face)], outer_face[(i-1 + offset) % len(outer_face)]), positions, )
+                return [f2] + order_faces(g2, (outer_face[i], outer_face[i-1]), positions)
     else:
         for i in range(1, len(outer_face)):  # Loops through edges starting at edge[1]
             if not same_face(g.traverse_face(outer_face[i], outer_face[i-1]), f1):  # take this edge
