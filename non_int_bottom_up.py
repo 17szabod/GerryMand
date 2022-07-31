@@ -8,6 +8,7 @@
 
 import collections
 import copy
+import functools
 import gc
 import itertools
 import math
@@ -1125,8 +1126,8 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     if draw:
         # ax = plt.subplot(121)
         # plt.sca(ax)
-        plt.figure(figsize=(25, 25))
-        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+        plt.figure(figsize=(65, 65))
+        nx.draw(g, pos=positions, node_size=30, with_labels=True, font_size=8, font_color='red', linewidths=0,
                 width=.2)
         # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
         # nx.draw(G2, pos=positions, with_labels=True)
@@ -1135,13 +1136,14 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
         plt.show()
         exit()
     g.check_structure()
-    print(order_faces(g, positions))
+    print(order_faces(g, positions, start_edge, exit_edge))
 
 
-def enumerate_paths_with_order(shapefile, face_order, draw=True):
+def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=False):
     print("Start time: " + str(time.time()))
     root = shapefile[:shapefile.index(".")]
-    if os.path.exists(root + ".adjlist"):
+    if os.path.exists(root + ".adjlist") and not recalculate:
+        print("Using cached adjacency {0}".format(root + ".adjlist"))
         h = nx.read_adjlist(root + ".adjlist", nodetype=int)
         success, g = nx.check_planarity(h, counterexample=True)
         positions = nx.planar_layout(g)
@@ -1152,11 +1154,16 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
         # for i in range(len(np_df)):
         #     g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
         # Explode the geometries
-        gdf = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
-        gdf.explode(ignore_index=True)
-        gdf.to_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
+        gdf = gpd.read_file(shapefile, encoding='UTF-8')
+        # dissolve into higher level
+        gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
+        gdf = gdf.reset_index()
+        gdf = gdf.explode(ignore_index=True)
+        gdf = gdf.groupby(by='TRACT').first()
+        shapefile = root+"_proc.shp"
+        gdf.to_file(shapefile, encoding='UTF-8')
         g_data = adjacency_from_shp(shapefile)
-        loc_df = gpd.read_file(shapefile, driver='ESRI shapefile', encoding='UTF-8')
+        loc_df = gpd.read_file(shapefile, encoding='UTF-8')
         # loc_df['centroid_column'] = loc_df.centroid
         # centers = loc_df.set_geometry('centroid_column')
         # centers.set_index('OBJECTID', inplace=True)
@@ -1185,6 +1192,8 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
             # spring layouts look somewhat normal-- we cannot get a near planar layout, because that can only be built from
             # planar graphs
             some_layout = nx.spring_layout(counterexample)
+            # nx.draw(h, pos=nx.nx_pydot.pydot_layout(counterexample, prog="dot"))
+            # plt.show()
             # Use the Bentley-Ottman algorithm to find bad edges
             cross_edges = find_intersecting_edges(counterexample, some_layout)
             rev_cross_edges = list([(e[1], e[0]) for e in cross_edges])
@@ -1215,6 +1224,7 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
         # graph is good: save it if it hasn't been saved
         if not os.path.exists(root + ".adjlist"):
             nx.write_adjlist(g, root+".adjlist")
+        print("Wrote calculated adjacency to {0}".format(root + ".adjlist"))
         # g = nx.PlanarEmbedding()
 
     # Sort angles w/o computing atan2, slightly faster for a computationally insignificant portion:
@@ -1245,13 +1255,14 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
     if draw:
         # ax = plt.subplot(121)
         # plt.sca(ax)
-        plt.figure(figsize=(25, 25))
-        nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+        plt.figure(figsize=(65, 65))
+        nx.draw(g, pos=positions, node_size=30, with_labels=True, font_size=8, font_color='red', linewidths=0,
                 width=.2)
         # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
         # nx.draw(G2, pos=positions, with_labels=True)
         # centers.plot()
         # loc_df.plot()
+        plt.savefig(root)
         plt.show()
         exit()
     success, counterexample = nx.check_planarity(g, counterexample=True)
@@ -1263,8 +1274,8 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
     g.check_structure()
 
     # start the algorithm!
-    exit_edge = (71, 74)
-    start_edge = (46, 48)
+    exit_edge = (442, 686)
+    start_edge = (41, 10)
     outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
                      key=lambda x: len(x))
     cts = []
@@ -1273,7 +1284,7 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
     k = 4
     num_samples = 100
-    cont_sections, count, sample_paths, outer_boundary, h2 = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples)
+    cont_sections, count, sample_paths, outer_boundary, h2 = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
@@ -1326,10 +1337,10 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True):
     return count
 
 
-def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples):
+def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples, root, recalculate):
     # exit_edge = (71, 74)
     # start_edge = (46, 48)
-    outer_face_edge = (71, 74)  # The edge where the outer face is cut
+    outer_face_edge = exit_edge  # The edge where the outer face is cut
     # Order the faces according to face_order
     outer_face = max([g.traverse_face(*outer_face_edge), g.traverse_face(outer_face_edge[1], outer_face_edge[0])],
                      key=lambda x: len(x))
@@ -1356,7 +1367,18 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         plt.show()
         # exit()
 
-    face_order = generate_face_order.order_faces(h2, start_edge, positions)
+    geom_dict = {key: generate_face_order.Point(positions[key]) for key in positions}
+    if not os.path.exists(root + ".order") or recalculate:
+        face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict)
+        with open(root + ".order", "x") as out_file:
+            for f in face_order:
+                for x in f:
+                    out_file.write(str(x) + ',')
+                out_file.write("\n")
+    else:
+        with open(root + ".order") as in_file:
+            face_order = in_file.readlines()
+            face_order = list([list([int(y) for y in x[:-2].split(',')]) for x in face_order])
     face_order = orient_faces(face_order, h2, positions, start_edge)
     # Test that face_order faces actually exist
     # for face in face_order:
@@ -1388,6 +1410,10 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         d_sets = [set(f) for f in face_order]
         if f_set not in d_sets:
             print("This face was in dict but not in face_order: " + str(face))
+            for f_ind in range(len(face_order)):
+                if any([x in face for x in face_order[f_ind]]):
+                    face_order = face_order[:f_ind+1] + [face] + face_order[f_ind+1:]
+                    break
     # Code to print out adjacency matrix for online viewer:
     # cur_verts = []
     # for v in face_dict.values():
@@ -1404,8 +1430,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     # exit()
     # Then sort faces by lexicographic y coordinates
     # face_list = sorted(face_dict.values(), key=lambda face: np.mean([positions[x][0] for x in face]))
-    exits = {start_edge, exit_edge}
-    cont_sections, face_list = create_face_order(exits, face_order, positions, start_boundary_list)
+    cont_sections, face_list = create_face_order(start_edge, face_order, positions, start_boundary_list, g, geom_dict)
     # Successfully created face_list!
     # exit()
     # Code to measure space needed (depends on face_list):
@@ -1443,18 +1468,39 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     return cont_sections, count, trimmed_sample_paths, start_boundary_list, h2
 
 
-def create_face_order(exits, face_order, positions, start_boundary_list):
+def create_face_order(start_edge, face_order, positions, start_boundary_list, g, geom_dict):
     # Ensure that face_list results in a continuous boundary
     # Iterate through face_list keeping track of contiguous boundary sets
     # Store the contiguous sections as a list (each frontier) of lists (each connected component) of lists (frontiers)
     cont_sections = []
     face_list = []
     cur_boundary = copy.deepcopy(start_boundary_list)
+    prev_ver = [start_edge]
     # A solution to incorrect face traversals is using a wait queue. This takes impossible faces, adds them to a queue,
     # and inserts them whenever they become possible
     wait_queue = []
     face_order_index = 0
     while face_order_index < len(face_order) or len(wait_queue) > 0:
+        if len(cont_sections) > 0:
+            sect_boundary = [x[0] for x in cont_sections[-1][0]] + [cont_sections[-1][0][-1][1]]
+            for x in range(2, len(sect_boundary)):
+                for offset in range(2, min(x, 5)):
+                    if sect_boundary[x-offset] in g[sect_boundary[x]]:
+                        to_add1 = []
+                        for face in wait_queue:
+                            if all(generate_face_order.vert_in_face(face, sect_boundary[x-offset:x+1], positions, geom_dict)):
+                                wait_queue.remove(face)
+                                to_add1.append(face)
+                        to_add2 = []
+                        for face in face_order[face_order_index:]:
+                            if all(generate_face_order.vert_in_face(face, sect_boundary[x-offset:x+1], positions, geom_dict)):
+                                if face not in wait_queue:
+                                    face_order.remove(face)
+                                    to_add2.append(face)
+                        wait_queue = to_add1 + to_add2 + wait_queue  # add to the beginning of wait_q
+                        # face = [f for f in face_order if generate_face_order.same_face(f, sect_boundary[x-2:x+1])]
+                        # if len(face) == 0:  # we have other faces in between:
+            print("Boundary length: {0}\t Wait queue length: {1}".format(len(sect_boundary), len(wait_queue)))
         # if len(cont_sections) > 0 and cont_sections[-1] == [[(110, 38), (38, 170), (170, 32), (32, 112)]]:
         #     print("")
         # Set up vertices in boundary
@@ -1463,27 +1509,34 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
         face_order_index += 1
         for q_face in wait_queue:
             # Check if face can now be added
-            if any((q_face[x], q_face[(x+1) % len(q_face)]) in cur_boundary for x in range(len(q_face))) and\
-                    np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) - \
+            if any([(q_face[x], q_face[(x+1) % len(q_face)]) in cur_boundary for x in range(len(q_face))]) and\
+                    np.count_nonzero([any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]) - \
                     np.count_nonzero([(q_face[x], q_face[(x + 1) % len(q_face)]) in cur_boundary for x in range(len(q_face))]) <= 2:
                 face = q_face
                 face_order_index -= 1
                 wait_queue.remove(q_face)
                 break
-            elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0 and\
-                not generate_face_order.vert_in_face(q_face[0], boundary_verts, positions):
-                # Some faces are filled in from things around them-- this means everything is okay, just remove it from the queue
-                wait_queue.remove(q_face)
+            # elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0 and\
+            #     not generate_face_order.vert_in_face(q_face[0], boundary_verts, positions):
+            #     # Some faces are filled in from things around them-- this means everything is okay, just remove it from the queue
+            #     wait_queue.remove(q_face)
         if face is None:
             raise BaseException("Failed to generate a valid traversal.")
         print(face) if debug else ""
         print(cur_boundary) if debug else ""
-        if not any((face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))) or\
-                np.count_nonzero([[any([face[x] in e for x in range(len(face))]) for e in cur_boundary]]) - \
-                np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) > 2:
+        if not any((face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))):
             # Algorithm messed up, add to queue-- the second condition checks for closed loops
             wait_queue.append(face)
             continue
+        if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in prev_ver]) - \
+                np.count_nonzero([(face[x], face[(x+1) % len(face)]) in prev_ver for x in range(len(face))]) > 2:
+            # catch cases that use the outer boundary
+            if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in cur_boundary]) - \
+                    np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) <= 2:
+                pass
+            else:
+                wait_queue.append(face)
+                continue
         face = list(reversed(face))
         # Make sure orientation of face is good
         m_ind = 0  # Index of the maximum vertex in the face that leaves the current boundary
@@ -1642,7 +1695,14 @@ def create_face_order(exits, face_order, positions, start_boundary_list):
     return cont_sections, face_list
 
 
-def clean_graph(exit_edge, face_dict, g, positions, start_boundary_labels, start_boundary_list, start_edge):
+def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_boundary_labels, start_boundary_list, start_edge):
+    # Make sure the graph only has one connected component
+    cocos = list(nx.connected_components(g))
+    if len(cocos) > 1:  # just remove the islands
+        for i in range(len(cocos)-1):
+            g.remove_nodes_from(cocos[i+1])
+            for f_name, f in face_dict.items():
+                face_dict.pop(f_name) if any([x in cocos[i+1] for x in f]) else ""
     # Some faces have self loops, we can remove the inner loops and all vertices within
     verts_to_clean = set()
     points_to_keep = set()
@@ -1798,11 +1858,8 @@ def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
         plt.show()
 
 
-def order_faces(graph, positions):
+def order_faces(graph, positions, start_edge, exit_edge):
     # Construct boundaries
-    exit_edge = (71, 74)
-    start_edge = (46, 48)
-
     outer_face = max([graph.traverse_face(*exit_edge), graph.traverse_face(exit_edge[1], exit_edge[0])],
                      key=lambda x: len(x))
     start_boundary_list = []
@@ -2117,10 +2174,13 @@ def test():
 def adjacency_from_shp(shapefile):
     # open file
     gdf = gpd.read_file(shapefile)
+    gdf = gdf.to_crs(crs=3857)  # Distance calculation is done in meters
     g_data = collections.defaultdict(list)
     for index, precinct in gdf.iterrows():
         # get 'not disjoint' countries
-        neighbors = gdf[~gdf.geometry.disjoint(precinct.geometry)].OBJECTID.keys().tolist()
+        # would be queen adjacency
+        neighbors = gdf[gdf.geometry.touches(precinct.geometry)]
+        neighbors = neighbors[neighbors.geometry.intersection(precinct.geometry).length > .001].index.tolist()
         # remove own name of the country from the list
         neighbors = [name for name in neighbors if index != name]
         g_data[index] = neighbors
@@ -2204,7 +2264,19 @@ if __name__ == '__main__':
     # adjacency_from_shp("data/exp2627wards.shp")
     random.seed(123456)
     np.random.seed(123456)
-    enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False)
+    # gdf = gpd.read_file("/home/dani/PycharmProjects/GerryMand/data/wi_cbgs/wi_pl2020_bg.shp", driver='ESRI shapefile', encoding='UTF-8')
+    # ngdf = gdf.to_numpy()
+    #
+    # def mode(a):
+    #     u, c = np.unique(a, return_counts=True)
+    #     return u[c.argmax()]
+    #
+    # def cust_agg(series):
+    #     return "sum" if series.dtype == "int64" else "mode"
+    #
+    # gdf = gdf.dissolve(by="TRACT", aggfunc="cust_agg")
+    # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False)
+    enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=False)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
     # out_dict = {}
