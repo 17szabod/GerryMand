@@ -1252,19 +1252,6 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     #     # print("{0}: {1}".format(v, new_neighb))
     #     oriented_g_data[v] = new_neighb
     # g.set_data(oriented_g_data)
-    if draw:
-        # ax = plt.subplot(121)
-        # plt.sca(ax)
-        plt.figure(figsize=(65, 65))
-        nx.draw(g, pos=positions, node_size=30, with_labels=True, font_size=8, font_color='red', linewidths=0,
-                width=.2)
-        # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
-        # nx.draw(G2, pos=positions, with_labels=True)
-        # centers.plot()
-        # loc_df.plot()
-        plt.savefig(root)
-        plt.show()
-        exit()
     success, counterexample = nx.check_planarity(g, counterexample=True)
     if not success:
         nx.draw(counterexample, pos=positions, with_labels=True)
@@ -1274,7 +1261,7 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     g.check_structure()
 
     # start the algorithm!
-    exit_edge = (442, 686)
+    exit_edge = (132, 771)
     start_edge = (41, 10)
     outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
                      key=lambda x: len(x))
@@ -1361,13 +1348,29 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     start_boundary_list, h2 = clean_graph(exit_edge, face_dict, g, positions, start_boundary_labels,
                                           start_boundary_list, start_edge)
     if draw:
-        plt.figure(figsize=(25, 25))
-        nx.draw(h2, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
+        # ax = plt.subplot(121)
+        # plt.sca(ax)
+        plt.figure(figsize=(65, 65))
+        nx.draw(h2, pos=positions, node_size=30, with_labels=True, font_size=8, linewidths=0,
                 width=.2)
+        frontiers = [[41, 15, 10], [59, 37, 15, 10], [75, 71, 59, 37, 15, 10], [121, 124, 72, 30, 2, 10], [131, 124, 72, 30, 2, 10], [130, 129, 30, 2, 10], [128, 30, 2, 10], [137, 30, 2, 10], [143, 141, 137, 30, 2, 10], [142, 141, 137, 30, 2, 10], [147, 141, 137, 30, 2, 10], [146, 136, 137, 30, 2, 10], [94, 93, 136, 137, 30, 2, 10], [39, 38, 46, 136, 137, 30, 2, 10], [36, 38, 46, 136, 137, 30, 2, 10], [14, 38, 46, 136, 137, 30, 2, 10], [14, 38, 46, 136, 137, 30, 2, 1, 816], [14, 38, 46, 136, 137, 30, 2, 1, 816, 707, 704], [14, 38, 46, 136, 137, 30, 2, 1, 816, 707, 705, 703], [14, 11, 661, 663, 664, 667, 670, 690, 689, 686, 677, 674], [151, 486, 284, 473, 495, 496, 782, 687, 686, 677, 674], [151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [152, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [127, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [127, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686], [126, 70, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686], [115, 60, 135, 139, 291, 284, 473, 495, 496, 782, 687, 686], [132, 135, 139, 291, 284, 473, 495, 496, 782, 687, 686], [132, 135, 139, 291, 284, 473, 495, 496, 782, 781], [132, 135, 139, 291, 284, 473, 495, 496, 783], [132, 135, 139, 291, 284, 473, 784], [132, 135, 139, 291, 284, 473, 785], [132, 135, 139, 291, 284, 283, 810], [132, 135, 139, 291, 288, 282, 320, 807], [132, 135, 139, 291, 288, 282, 320, 806], [132, 135, 139, 291, 288, 282, 320, 319], [132, 135, 139, 291, 288, 282, 320, 262, 263, 253], [132, 135, 140, 298, 244, 252], [132, 135, 140, 298, 306, 310], [132, 135, 759, 756, 744, 736], [132, 135, 759, 756, 744, 743, 742], [132, 135, 759, 756, 788, 792, 793], [132, 135, 759, 756, 788, 797], [132, 135, 759, 768]]
+        edge_bunch = []
+        edge_cmap = []
+        for i in range(len(frontiers)):
+            frontier = frontiers[i]
+            edge_bunch += list([(frontier[f], frontier[f+1]) for f in range(len(frontier)-1)])
+            edge_cmap += [i,]*(len(frontier)-1)
+        nx.draw_networkx_edges(h2, pos=positions, edgelist=edge_bunch, edge_color=edge_cmap, edge_cmap=plt.cm.plasma)
         plt.show()
-        # exit()
+        # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
+        # nx.draw(G2, pos=positions, with_labels=True)
+        # centers.plot()
+        # loc_df.plot()
+        plt.savefig(root)
+        exit()
 
     geom_dict = {key: generate_face_order.Point(positions[key]) for key in positions}
+
     if not os.path.exists(root + ".order") or recalculate:
         face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict)
         with open(root + ".order", "x") as out_file:
@@ -1379,6 +1382,14 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         with open(root + ".order") as in_file:
             face_order = in_file.readlines()
             face_order = list([list([int(y) for y in x[:-2].split(',')]) for x in face_order])
+
+    # set start_edge and end_edge according to the traversal
+    start_edge = tuple(x for x in face_order[0] if x in outer_face)
+    exit_edge = tuple(x for x in face_order[-1] if x in outer_face)
+    if not generate_face_order.same_face(h2.traverse_face(*start_edge), outer_face):
+        start_edge = (start_edge[1], start_edge[0])
+    if not generate_face_order.same_face(h2.traverse_face(*exit_edge), outer_face):
+        exit_edge = (exit_edge[1], exit_edge[0])
     face_order = orient_faces(face_order, h2, positions, start_edge)
     # Test that face_order faces actually exist
     # for face in face_order:
