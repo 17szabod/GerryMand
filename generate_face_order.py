@@ -88,10 +88,18 @@ def vert_in_face_mtpltlib(v, face, positions):
 # Given a planar graph g, generate a face order starting with edge
 # @param g_copy: The input graph g. this will be copied into a new graph that can change, but we still need to access it
 # @param edge: The edge to start the traversal with
-# @param positions: the position dictionary of every node in g and maybe more
-def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
+# @param positions: The position dictionary of every node in g and maybe more
+# @param bottom: The 'safe edges' that are part of the traversal order, sent as a dictionary of edges
+# Presupposes that bottom is a subset of the outer face of g_copy
+def order_faces(g_copy, edge, positions, geom_dict, bottom, exit_edge=None):
+    bottom_verts = set()
+    for b in bottom:
+        bottom_verts.add(b[0])
+        bottom_verts.add(b[1])
     g = copy.deepcopy(g_copy)  # The graph to be modified in each iteration
     g_prime = copy.deepcopy(g)  # The version of g with outer edges removed
+    if edge is None:  # Algorithm couldn't find a good edge, so just choose one
+        edge = min([e for e in g.edges if all(vert_in_face(g.nodes, g.traverse_face(*e), positions, geom_dict))], key=lambda e: len(g.traverse_face(*e)))
     # outer_face = max([g.traverse_face(*edge), g.traverse_face(edge[1], edge[0])], key=lambda x: len(x))
     outer_face = min([g.traverse_face(*edge), g.traverse_face(edge[1], edge[0])], key=lambda x: len(x) if all(vert_in_face(g.nodes, x, positions, geom_dict)) else np.infty)
     if not all(vert_in_face(g.nodes, outer_face, positions, geom_dict)):
@@ -99,7 +107,8 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
     outer_face = outer_face[1:] + [outer_face[0]]
     outer_face_edges = [(outer_face[i], outer_face[(i + 1) % len(outer_face)]) for i in range(len(outer_face))]
     rev_outer_face_edges = [(outer_face[(i + 1) % len(outer_face)], outer_face[i]) for i in range(len(outer_face))]
-
+    if not all([b in outer_face_edges or b in rev_outer_face_edges for b in bottom]):
+        bottom = {b for b in bottom if b in g.edges}  # No point keeping those that don't exist
     if nx.has_bridges(g.to_undirected(reciprocal=True)):
         # Simply remove these edges and induct on each nontrivial component
         bridges = list(nx.bridges(g.to_undirected(reciprocal=True)))
@@ -109,19 +118,16 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
         for coco in new_graphs:
             if len(coco) > 1:
                 g2 = make_subgraph(g, coco)
+                new_bottom = set((b for b in bottom if b in g2.edges))
                 new_edge = edge if edge in g2.edges else ""
                 if new_edge == "":
-                    for e in g2.edges:
-                        if np.any(e[0] in b or e[1] in b for b in bridges):  # must hold for some edge
-                            if all(vert_in_face(g2.nodes, g2.traverse_face(*e), positions, geom_dict)) \
-                                    or all(vert_in_face(g2.nodes, g2.traverse_face(e[1], e[0]), positions, geom_dict)):
-                                new_edge = e  # may have a counterexample where we break contiguity!!
-                                break
-                local_traversal += order_faces(g2, new_edge, positions, geom_dict)
+                    for safe_edge in new_bottom:
+                        if any(b[0] in safe_edge or b[1] in safe_edge for b in bridges):
+                            new_edge = safe_edge
+                local_traversal += order_faces(g2, new_edge, positions, geom_dict, new_bottom)
         return local_traversal
 
-    g_prime.remove_edges_from(outer_face_edges)
-    g_prime.remove_edges_from(rev_outer_face_edges)
+    g_prime = remove_planar_edges(g_prime, outer_face_edges)
     if g_prime.size() == 0:
         if nx.node_connectivity(g) == 1:
             # We have bridge nodes
@@ -138,35 +144,57 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
         return [list(g.nodes)]
 
     if len(outer_face) == 3:  # graphs embedded in a triangle are a special case, just remove one face and induct
-        return step_one_face(edge, g, outer_face, positions, geom_dict)
+        return step_one_face(edge, g, outer_face, positions, geom_dict, bottom)
     # Graphs that have few high (>2) degree vertices on the outer face are not suitable for this algorithm
     if sum(1 if x[1] > 2 else 0 for x in g.in_degree if x[0] in outer_face) <= 3:  # 3 is arbitrary
         # Doe the same thing as if the outer_face is a triangle-- It will get some functional ordering of faces
-        return step_one_face(edge, g, outer_face, positions, geom_dict)
+        return step_one_face(edge, g, outer_face, positions, geom_dict, bottom)
 
-    all_paths = dict(nx.all_pairs_shortest_path(g_prime))
-    d = {(len(outer_face)-1, 0): (1, 0)}
+    bottom_verts = list([n for n in bottom_verts if len(list([e for e in bottom if n in e])) > 2])
+    # all_paths = dict(nx.all_pairs_shortest_path(g_prime))
+    d = {(len(outer_face)-1, 0): (1, 0)}  # d counts do keep track of penalties
+    if outer_face[0] not in g_prime and outer_face[-1] not in g_prime:  # algorithm just doesn't have anywhere to start
+        for i in range(len(outer_face)):
+            if outer_face[i] in g_prime:
+                outer_face = list(outer_face[(i+j)%len(outer_face)] for j in range(len(outer_face)))
+                edge = (outer_face[-1], outer_face[0])
+                break
     # Make the traversal order:
     for i in range(2, len(outer_face)):  # i=l-u+v
         for v in range(i):
             u = len(outer_face) - i + v
+            # Keep track of penalties for leaving bottom
+            u_penalty = 1 if u != len(outer_face)-1 and (outer_face[u+1], outer_face[u]) not in bottom else 0
+            v_penalty = 1 if v > 0 and (outer_face[v], outer_face[v-1]) not in bottom else 0
+            # Only allow paths that don't go back and forth from untraversed outer_face, this causes discontinuities
+            bad_nodes = [n for n in g_prime.nodes if n in outer_face and (n not in bottom_verts and n != outer_face[u] and n != outer_face[v])]
+            # The last safe node in each direction must be removed as well
+            g2 = make_subgraph(g_prime, list([n for n in g_prime.nodes if n not in bad_nodes])) if len(bad_nodes) > 0 else g_prime
+            # some bad edges between two good nodes can still survive?
+            bad_edges = [e for e in g_prime.edges if (e in outer_face_edges or e in rev_outer_face_edges) and e not in bottom]
+            if any(e in g2.edges for e in bad_edges):
+                raise BaseException("I don't think this should happen? But then whats the point?")
+            if outer_face[u] not in g_prime or outer_face[v] not in g_prime or not nx.has_path(g2, outer_face[u], outer_face[v]):
+                if outer_face[v] not in g_prime or g_prime.degree(outer_face[v]) == 0:  # move the 0 degree vertex
+                    d[(u, v)] = (d[(u, v - 1)][0] + v_penalty, 0) if v > 0 else (np.infty, 1)
+                elif outer_face[u] not in g_prime or g_prime.degree(outer_face[u]) == 0:
+                    d[(u, v)] = (d[(u+1, v)][0] + u_penalty, 1) if u < len(outer_face)-1 else (np.infty, 0)
+                else:  # can happen, just move one of them
+                    if u + 1 == len(outer_face):
+                        d[(u, v)] = (d[(u, v - 1)][0] + v_penalty, 0)
+                    elif v - 1 < 0:
+                        d[(u, v)] = (d[(u + 1, v)][0] + u_penalty, 1)
+                    else:
+                        ind = np.argmin([d[(u, v-1)][0] + v_penalty, d[(u+1, v)][0] + u_penalty])
+                        d[(u, v)] = ([d[(u, v-1)][0] + v_penalty, d[(u+1, v)][0] + u_penalty][ind], ind)
+                continue
             if u+1 == len(outer_face):
-                d[(u, v)] = (d[(u, v-1)][0], 0) if outer_face[v] not in all_paths[outer_face[u]] else (max(d[(u, v-1)][0], len(all_paths[outer_face[u]][outer_face[v]])), 0)
-                continue
+                d[(u, v)] = (max(d[(u, v-1)][0] + v_penalty, len(nx.shortest_path(g2, source=outer_face[u], target=outer_face[v]))), 0)
             elif v-1 < 0:
-                d[(u, v)] = (d[(u+1, v)][0], 1) if outer_face[v] not in all_paths[outer_face[u]] else (max(d[(u+1, v)][0], len(all_paths[outer_face[u]][outer_face[v]])), 1)
-                continue
+                d[(u, v)] = (max(d[(u+1, v)][0] + u_penalty, len(nx.shortest_path(g2, source=outer_face[u], target=outer_face[v]))), 1)
             else:
-                ind = np.argmin([d[(u, v-1)][0], d[(u+1, v)][0]])
-            if outer_face[v] not in all_paths[outer_face[u]]:
-                if g_prime.degree(outer_face[v]) == 0:  # move the 0 degree vertex
-                    d[(u, v)] = (d[(u, v - 1)][0], 0)
-                elif g_prime.degree(outer_face[u]) == 0:
-                    d[(u, v)] = (d[(u+1, v)][0], 1)
-                else:  # shouldn't really happen
-                    d[(u, v)] = ([d[(u, v-1)][0], d[(u+1, v)][0]][ind], ind)
-            else:
-                d[(u, v)] = (max([d[(u, v-1)][0], d[(u+1, v)][0]][ind], len(all_paths[outer_face[u]][outer_face[v]])), ind)
+                ind = np.argmin([d[(u, v-1)][0] + v_penalty, d[(u+1, v)][0] + u_penalty])
+                d[(u, v)] = (max([d[(u, v-1)][0] + v_penalty, d[(u+1, v)][0] + u_penalty][ind], len(nx.shortest_path(g2, source=outer_face[u], target=outer_face[v]))), ind)
     # Use the traceback to get the cut order
     if exit_edge is not None:
         end_u, end_v = outer_face.index(exit_edge[0]), outer_face.index(exit_edge[1])
@@ -176,11 +204,13 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
         end_u, end_v = min(d.keys(), key=lambda x: d[x][0] if x[0] - x[1] == 1 else np.infty)
     order = []  # order encodes when to increase u or v-- if order is 0, decrease u, if 1, increase v
     u, v = end_u, end_v
-    mylist = []
+    pathlist = []
     for i in range(1, len(outer_face)-1):
         order = [d[(u,v)][1]] + order
         u, v = (u+1, v) if order[0] else (u, v-1)  # opposite
-        mylist = [all_paths[outer_face[u]][outer_face[v]]] + mylist if outer_face[v] in all_paths[outer_face[u]] else mylist
+        bad_nodes = [n for n in g_prime.nodes if n in outer_face and (n not in bottom_verts and n != outer_face[u] and n != outer_face[v])]
+        g2 = make_subgraph(g_prime, list([n for n in g_prime.nodes if n not in bad_nodes])) if len(bad_nodes) > 0 else g_prime
+        pathlist = [nx.shortest_path(g2, source=outer_face[u], target=outer_face[v])] + pathlist if outer_face[u] in g_prime and outer_face[v] in g_prime and nx.has_path(g2, outer_face[u], outer_face[v]) else pathlist
     u = len(outer_face)-1
     v = 0
     prev_u = len(outer_face)-1
@@ -217,34 +247,54 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
                              key=lambda x: len(x) if all(vert_in_face(g.nodes, x, positions, geom_dict)) else np.infty)
             for f in faces:
                 if not same_face(f, outer_face):
-                    traversal += [f]
+                    traversal += [f]  # Might create a minor problem with order but who cares
             return traversal
 
+        g_prime = copy.deepcopy(g)
+        g_prime = remove_planar_edges(g_prime, [x for x in outer_face_edges if x in g.edges])
         if change_u:
             u -= 1
-            while outer_face[u] not in all_paths[outer_face[v]]:
+            bad_nodes = [n for n in g_prime.nodes if n in outer_face and (n not in bottom_verts and n != outer_face[u] and n != outer_face[v])]
+            g2 = make_subgraph(g_prime, list([n for n in g_prime.nodes if n not in bad_nodes])) if len(bad_nodes) > 0 else g_prime
+            while outer_face[u] not in g_prime or not nx.has_path(g2, outer_face[u], outer_face[v]):
                 u -= 1
+                bad_nodes = [n for n in g_prime.nodes if n in outer_face and (n not in bottom_verts and n != outer_face[u] and n != outer_face[v])]
+                g2 = make_subgraph(g_prime, list([n for n in g_prime.nodes if n not in bad_nodes])) if len(bad_nodes) > 0 else g_prime
                 iter += 1
         else:
             v += 1
-            while outer_face[u] not in all_paths[outer_face[v]]:
+            bad_nodes = [n for n in g_prime.nodes if n in outer_face and (n not in bottom_verts and n != outer_face[u] and n != outer_face[v])]
+            g2 = make_subgraph(g_prime, list([n for n in g_prime.nodes if n not in bad_nodes])) if len(bad_nodes) > 0 else g_prime
+            while outer_face[v] not in g_prime or not nx.has_path(g2, outer_face[u], outer_face[v]):
                 v += 1
+                bad_nodes = [n for n in g_prime.nodes if n in outer_face and (n not in bottom_verts and n != outer_face[u] and n != outer_face[v])]
+                g2 = make_subgraph(g_prime, list([n for n in g_prime.nodes if n not in bad_nodes])) if len(bad_nodes) > 0 else g_prime
                 iter += 1
+        # Create new bottom:
+        if change_u:
+            new_bottom = list([x for x in outer_face[u:prev_u] if any([x in b for b in bottom])])
+            if len(new_bottom) == 0 or outer_face[prev_u-1] in new_bottom:
+                new_bottom += prev_p if outer_face[prev_u] == prev_p[0] else list(reversed(prev_p))
+            else:  # don't know which direction to add but bottom has to be continuous so we have mad a whole loop
+                # Add to other end
+                new_bottom = prev_p + new_bottom if new_bottom[0] in g[prev_p[0]] else list(reversed(prev_p)) + new_bottom
+        else:
+            new_bottom = list([x for x in outer_face[prev_v + 1: v + 1] if any([x in b for b in bottom])])
+            new_bottom = prev_p + new_bottom if outer_face[prev_v] == prev_p[-1] else list(reversed(prev_p)) + new_bottom
+        new_bottom = {(new_bottom[i], new_bottom[i+1]) for i in range(len(new_bottom)-1)}
+        new_bottom.update({(b[1], b[0]) for b in new_bottom})
+        # bottom.update(new_bottom)
         if u == v:
             # we have nothing left above, induct on below
-            e = (prev_p[0], prev_p[1])  # find the edge
-            # Will often be part of a bridge edge, which ends up not guaranteeing continuity of traversal
-            path_ind = 0
-            while g.in_degree[e[0]] == 1 or g.in_degree[e[1]] == 1:
-                g = remove_planar_edges(g, [e])
-                path_ind += 1
-                if path_ind == len(prev_p)-1:
-                    e = [(prev_p[path_ind], x) for x in g[prev_p[path_ind]] if x in outer_face][0]
+            # Uses previous up_outer if it exists, which has to have been unique'd
+            e = None
+            for b in new_bottom:
+                if b in g.edges:
+                    e = b
                     break
-                e = (prev_p[path_ind], prev_p[path_ind + 1])
-            return traversal + step_one_face(e, g, up_outer, positions, geom_dict) if "up_outer" in locals() else traversal + step_one_face(e, g, outer_face, positions, geom_dict)
-        p = all_paths[outer_face[u]][outer_face[v]]
-        # p2 = all_paths[outer_face[u]][outer_face[(v+v_offset) % len(outer_face)]]
+            return traversal + step_one_face(e, g, up_outer, positions, geom_dict, new_bottom) if "up_outer" in locals()\
+                else traversal + step_one_face(e, g, outer_face, positions, geom_dict, new_bottom)
+        p = nx.shortest_path(g2, source=outer_face[u], target=outer_face[v])  # still correct g2
         if prev_p == p:  # We have made no progress! choose the other edge
             raise BaseException("Something is terribly wrong and no progress can be made.")
         # Create down_outer:
@@ -265,26 +315,36 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
                 down.add(vert)
             if vert not in up and vert not in down:
                 raise BaseException("Vert {0} is neither below nor above this intermediate path".format(vert))
+        to_rem = []
+        for i in range(len(down_outer)):
+            if down_outer[i] == down_outer[(i-1) % len(down_outer)]:
+                to_rem.append(i)
+        for i in reversed(to_rem):
+            down_outer.pop(i)
         subproblem = make_subgraph(g, list(down) + p)
-        for j in range(len(p)):  # check that p[j] doesn't border any non-directly neighboring edge in p
-            for neighb in subproblem[p[j]]:
-                if neighb in p:
-                    if j < len(p)-1 and neighb == p[j+1]:
+        for j in range(len(down_outer)):  # check that down_outer doesn't have any non-directly neighboring edge
+            if down_outer.count(down_outer[j]) > 1:
+                continue  # these will be handled later
+            for neighb in subproblem[down_outer[j]]:
+                if neighb in down_outer:
+                    if neighb == down_outer[(j+1) % len(down_outer)]:
                         continue
-                    if j > 0 and neighb == p[j-1]:
+                    if neighb == down_outer[(j-1) % len(down_outer)]:
                         continue
                     # Check that if this face is simple
-                    danger_face = p[j:p.index(neighb)+1] if j < p.index(neighb)+1 else p[p.index(neighb):j+1]
-                    # path = mpath.Path(list([positions[x] for x in danger_face]))
-                    # if any(path.contains_point(positions[x]) for x in g_copy.nodes if x not in subproblem.nodes):
+                    danger_face = down_outer[j:down_outer.index(neighb)+1] if j < down_outer.index(neighb)+1 else down_outer[down_outer.index(neighb):j+1]
+                    # Add case for when danger face is in the cyclic part
                     if any([vert_in_face(x, danger_face, positions, geom_dict) for x in g_copy.nodes if x not in subproblem.nodes]):
                         # if (neighb, p[j]) in outer_face_edges or (neighb, p[j]) in rev_outer_face_edges:
                         #     continue  # don't remove the outer face edges
-                        subproblem = remove_planar_edges(subproblem, [(neighb, p[j])])
+                        subproblem = remove_planar_edges(subproblem, [(neighb, down_outer[j])])
+                        new_bottom.remove((neighb, down_outer[j])) if (neighb, down_outer[j]) in new_bottom else ""
+                        new_bottom.remove((down_outer[j], neighb)) if (down_outer[j], neighb) in new_bottom else ""
                     # Also check if any edges go outside of down, we don't need those
-                    # elif not mpath.Path(list([positions[x] for x in down_outer])).contains_point((positions[neighb] + positions[p[j]])/2):
-                    elif not vert_in_face((positions[neighb] + positions[p[j]])/2, down_outer, positions, geom_dict, use_graph=False):
-                        subproblem = remove_planar_edges(subproblem, [(neighb, p[j])])
+                    elif not vert_in_face((positions[neighb] + positions[down_outer[j]])/2, down_outer, positions, geom_dict, use_graph=False):
+                        subproblem = remove_planar_edges(subproblem, [(neighb, down_outer[j])])
+                        new_bottom.remove((neighb, down_outer[j])) if (neighb, down_outer[j]) in new_bottom else ""
+                        new_bottom.remove((down_outer[j], neighb)) if (down_outer[j], neighb) in new_bottom else ""
         new_graph = make_subgraph(g, list(up) + p)
         if len(down) == len(p):  # We found no additional nodes below p
             # Find the additional edges to remove
@@ -301,8 +361,12 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
                         if not vert_in_face((positions[neighb] + positions[p[j]]) / 2, up_outer, positions, geom_dict, use_graph=False):
                             # remove edges that are not contained in up_outer
                             new_graph = remove_planar_edges(new_graph, [(neighb, p[j])])
-        down_outer = list(dict.fromkeys(down_outer))  # unique values with order
-        e = (down_outer[0], down_outer[1])
+        # down_outer = list(dict.fromkeys(down_outer))  # unique values with order
+        e = None
+        for b in new_bottom:
+            if b in subproblem.edges:
+                e = b
+                break
         if nx.has_bridges(subproblem.to_undirected(reciprocal=True)):
             # Simply remove these edges and induct on each nontrivial component
             bridges = list(nx.bridges(subproblem.to_undirected(reciprocal=True)))
@@ -311,48 +375,48 @@ def order_faces(g_copy, edge, positions, geom_dict, exit_edge=None):
             for coco in new_graphs:
                 if len(coco) > 1:
                     g2 = make_subgraph(subproblem, coco)
-                    new_edge = None
-                    for i in range(len(down_outer)-1):
-                        if (down_outer[i], down_outer[i+1]) in g2.edges:
-                            new_edge = (down_outer[i], down_outer[i+1])
-                    if new_edge is None:
-                        raise BaseException("Oh no!")
-                    traversal += order_faces(g2, new_edge, positions, geom_dict)
+                    new_edge = [e for e in g2.edges if e in new_bottom][0]
+                    traversal += order_faces(g2, new_edge, positions, geom_dict, new_bottom.intersection(set(g2.edges)))
         else:
-            traversal += order_faces(subproblem, e, positions, geom_dict)
-        # if subproblem.number_of_nodes() - subproblem.size()/2 != 1:  # subproblem is a not a path
-        #     # Will often be part of a bridge edge, which ends up not guaranteeing continuity of traversal
-        #     path_ind = 0
-        #     while same_face(subproblem.traverse_face(e[0], e[1]), subproblem.traverse_face(e[1], e[0])) and subproblem.size()/2 - subproblem.number_of_nodes() + 2 != 2:
-        #         subproblem = remove_planar_edges(subproblem, [e])
-        #         path_ind += 1
-        #         if path_ind == len(down_outer)-1:
-        #             e = [(down_outer[path_ind], x) for x in subproblem[p[path_ind]] if x in outer_face][0]
-        #             break
-        #         e = (down_outer[path_ind], down_outer[path_ind + 1])
-        #     if e not in subproblem.edges:
-        #         raise BaseException("Failed to find an initial edge for recursive face ordering procedure.")
-        #     traversal += order_faces(subproblem, e, positions, geom_dict)
-        # else:
-        #     print("")
+            traversal += order_faces(subproblem, e, positions, geom_dict, new_bottom)
         g = copy.deepcopy(new_graph)
         prev_p = copy.deepcopy(p)
         prev_u = u
         prev_v = v
-    traversal += order_faces(g, (p[0], p[1]), positions, geom_dict)
+    new_bottom = {(p[i], p[i + 1]) for i in range(len(p) - 1)}
+    new_bottom.update({(p[1], p[0]) for p in new_bottom})
+    traversal += order_faces(g, (p[0], p[1]), positions, geom_dict, new_bottom)  # need to do one last run
     return traversal
 
 
 # The above algorithm does not work well for certain degenerate cases, this manually adds edge's face to the traversal
-def step_one_face(edge, g, outer_face, positions, geom_dict):
+def step_one_face(edge, g, outer_face, positions, geom_dict, bottom):
     outer_face_edges = [(outer_face[i], outer_face[(i + 1) % len(outer_face)]) for i in range(len(outer_face))]
     rev_outer_face_edges = [(outer_face[(i + 1) % len(outer_face)], outer_face[i]) for i in range(len(outer_face))]
     f1 = g.traverse_face(*edge)
     f2 = g.traverse_face(edge[1], edge[0])
     g2 = remove_planar_edges(g, [edge])
     new_face = f2 if same_face(f1, outer_face) else f1
+    new_face_edges = {(new_face[i], new_face[(i+1)%len(new_face)]) for i in range(len(new_face))}
+    new_face_edges.update({(b[1], b[0]) for b in new_face_edges})
+    old_edges = new_face_edges.intersection(bottom)
+    new_bottom = bottom.difference(old_edges).union(new_face_edges.difference(old_edges))
+    # old_slice = list([b for b in bottom if b in new_face])
+    # inds = (bottom.index(old_slice[0]), bottom.index(old_slice[-1]))
+    # f_inds = (new_face.index(old_slice[0]), new_face.index(old_slice[-1]))
+    # new_slice = new_face[f_inds[0]:f_inds[1]+1] if f_inds[0] < f_inds[1] else new_face[f_inds[1]:f_inds[0]+1]
+    # if f_inds[0] < f_inds[1]:  # either new_slice follows bottom orientation and is inside or doesn't and is outside
+    #     if same_face(new_face[f_inds[0]:f_inds[1]+1], old_slice):  # different orientation and outside
+    #         new_slice = list(reversed(new_face[f_inds[1]:] + new_face[:f_inds[0] + 1]))
+    #     else:  # same orientation and inside
+    #         new_slice = new_face[f_inds[0]:f_inds[1]+1]
+    # else: # either new_slice follows bottom orientation and is outside or doesn't and is inside
+    #     if same_face(new_face[f_inds[1]:f_inds[0]+1], old_slice):  # same orientation and outside
+    #         new_slice = new_face[f_inds[0]:] + new_face[:f_inds[1] + 1]
+    #     else:  # different orientation and inside
+    #         new_slice = list(reversed(new_face[f_inds[1]:f_inds[0]+1]))
+    # new_bottom = bottom[:inds[0]] + new_slice + bottom[inds[1] + 1:]
     traversal = []
-    found = False
     if nx.has_bridges(g2.to_undirected(reciprocal=True)):
         # Simply remove these edges and induct on each nontrivial component
         bridges = list(nx.bridges(g2.to_undirected(reciprocal=True)))
@@ -361,33 +425,15 @@ def step_one_face(edge, g, outer_face, positions, geom_dict):
         for coco in new_graphs:
             if len(coco) > 1:
                 g2 = make_subgraph(subproblem, coco)
-                new_edge = None
-                for i in range(len(new_face)):
-                    if (new_face[i], new_face[(i + 1) % len(new_face)]) in g2.edges:
-                        new_edge = (new_face[i], new_face[(i + 1) % len(new_face)])
-                if new_edge is None:  # May cause discontinuities!
-                    for i in range(1, len(outer_face)):  # Loops through edges starting at edge[1]
-                        if not same_face(g.traverse_face(outer_face[i], outer_face[i - 1]), new_face) and (outer_face[i], outer_face[i - 1]) in g2.edges:  # take this edge
-                            traversal += [new_face] + order_faces(g2, (outer_face[i], outer_face[i - 1]), positions, geom_dict)
-                            found = True
-                else:
-                    traversal += [new_face] + order_faces(g2, new_edge, positions, geom_dict)
-                    found = True
+                new_edge = [e for e in g2.edges if e in new_bottom][0]
+                traversal += [new_face] + order_faces(g2, new_edge, positions, geom_dict, new_bottom.intersection(set(g2.edges)))
     else:
-        new_edge = None
-        for i in range(len(new_face)):
-            if (new_face[i], new_face[(i + 1) % len(new_face)]) in g2.edges:
-                new_edge = (new_face[i], new_face[(i + 1) % len(new_face)])
-        if new_edge is None:  # May cause discontinuities!
-            for i in range(1, len(outer_face)):  # Loops through edges starting at edge[1]
-                if not same_face(g.traverse_face(outer_face[i], outer_face[i - 1]), new_face) and (outer_face[i], outer_face[i - 1]) in g2.edges:  # take this edge
-                    traversal += [new_face] + order_faces(g2, (outer_face[i], outer_face[i - 1]), positions, geom_dict)
-                    found = True
-        else:
-            traversal += [new_face] + order_faces(g2, new_edge, positions, geom_dict)
-            found = True
-    if not found:
-        raise BaseException("Missed a face.")
+        e = None
+        for b in new_bottom:
+            if b in g2.edges:
+                e = b
+                break
+        traversal += [new_face] + order_faces(g2, e, positions, geom_dict, new_bottom)
     return traversal
 
 

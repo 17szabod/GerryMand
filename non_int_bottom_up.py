@@ -1372,7 +1372,11 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     geom_dict = {key: generate_face_order.Point(positions[key]) for key in positions}
 
     if not os.path.exists(root + ".order") or recalculate:
-        face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict)
+        outer_face = min([h2.traverse_face(*start_edge), h2.traverse_face(start_edge[1], start_edge[0])],
+                         key=lambda x: len(x) if all(generate_face_order.vert_in_face(h2.nodes, x, positions, geom_dict)) else np.infty)
+        outer_face_edges = {(outer_face[i], outer_face[(i + 1) % len(outer_face)]) for i in range(len(outer_face))}
+        rev_outer_face_edges = {(outer_face[(i + 1) % len(outer_face)], outer_face[i]) for i in range(len(outer_face))}
+        face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict, outer_face_edges.union(rev_outer_face_edges))
         with open(root + ".order", "x") as out_file:
             for f in face_order:
                 for x in f:
@@ -1492,10 +1496,14 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
     wait_queue = []
     face_order_index = 0
     while face_order_index < len(face_order) or len(wait_queue) > 0:
+        if face_order_index == 111:
+            print("ok wth")
         if len(cont_sections) > 0:
             sect_boundary = [x[0] for x in cont_sections[-1][0]] + [cont_sections[-1][0][-1][1]]
+            if any(sect_boundary.count(x) > 1 for x in sect_boundary):
+                print("fack")
             for x in range(2, len(sect_boundary)):
-                for offset in range(2, min(x, 5)):
+                for offset in range(2, min(x, 10)):
                     if sect_boundary[x-offset] in g[sect_boundary[x]]:
                         to_add1 = []
                         for face in wait_queue:
@@ -1527,10 +1535,10 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
                 face_order_index -= 1
                 wait_queue.remove(q_face)
                 break
-            # elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0 and\
-            #     not generate_face_order.vert_in_face(q_face[0], boundary_verts, positions):
-            #     # Some faces are filled in from things around them-- this means everything is okay, just remove it from the queue
-            #     wait_queue.remove(q_face)
+            elif np.count_nonzero([[any([q_face[x] in e for x in range(len(q_face))]) for e in cur_boundary]]) == 0 and\
+                not generate_face_order.vert_in_face(q_face[0], boundary_verts, positions, geom_dict):
+                # Some faces are filled in from things around them-- this means everything is okay, just remove it from the queue
+                wait_queue.remove(q_face)
         if face is None:
             raise BaseException("Failed to generate a valid traversal.")
         print(face) if debug else ""
@@ -1539,8 +1547,8 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
             # Algorithm messed up, add to queue-- the second condition checks for closed loops
             wait_queue.append(face)
             continue
-        if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in prev_ver]) - \
-                np.count_nonzero([(face[x], face[(x+1) % len(face)]) in prev_ver for x in range(len(face))]) > 2:
+        if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in cur_boundary]) - \
+                np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) > 2:
             # catch cases that use the outer boundary
             if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in cur_boundary]) - \
                     np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) <= 2:
