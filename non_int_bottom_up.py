@@ -21,6 +21,7 @@ import numpy as np
 import geopandas as gpd
 import generate_face_order
 import poly_point_isect
+import sqlite3
 
 debug = False
 depth_bound = 4
@@ -38,43 +39,65 @@ def partition(number, p_count):
     return answer
 
 
-def count_non_int_paths_w_table(table, edge_dicts, k, num_samples):
+def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, conn=None):
     num_states = 2*(k-1) + 1
-    rev_edge_maps = []  # Keep track of backtracking edge maps for sampling
-    # table[-1][num_states-1][''] = 1
-    for i in range(1, len(table)):  # Go through bottom up (always subtract i)
-        edge_map = [collections.defaultdict(list) for k in range(num_states)]
-        ind = len(table) - i - 1
-        for s in range(num_states):
-            for path in edge_dicts[ind][s]:
-                for tup in edge_dicts[ind][s][path]:
-                    if tup[0] in table[ind][tup[1]] and table[ind+1][s][path] > 0:
-                        table[ind][tup[1]][tup[0]] += table[ind+1][s][path]
-                        edge_map[tup[1]][tup[0]].append((path, s, table[ind+1][s][path]))
-        rev_edge_maps.append(edge_map)
-    rev_edge_maps = list(reversed(rev_edge_maps))
     # Sample top down:
     # sample paths are of the form (0:path, 1:end_state)
     sample_paths = [{0: [''], 1: 0} for x in range(num_samples)]
-    # for y in range(num_states - 1):  # Allstates except the first one
-    #     sample_paths.append([])  # for s=1,...2(k-1), the init path has no districts
-    for i in range(len(rev_edge_maps)):
-        for j in range(len(sample_paths)):
-            path = sample_paths[j][0]
-            path_k = sample_paths[j][1]
-            count_arr = [x[2] for x in rev_edge_maps[i][path_k][path[-1]]]
-            if len(count_arr) == 0:
-                print("Lost a path :(")  # Really should never happen, unless layer has an empty entry
-            choice = np.random.uniform(0, sum(count_arr))
-            sample_ind = np.arange(len(count_arr))[
-                np.asanyarray([sum(count_arr[:x + 1]) >= choice for x in range(len(count_arr))])][0]
-            # Set new path_k and append next step in path
-            new_step, new_k, c = rev_edge_maps[i][path_k][path[-1]][sample_ind]
-            sample_paths[j][0].append(new_step)
-            sample_paths[j][1] = new_k
-        # print("Currently have {0} paths".format(len(sample_paths)))
+
+    if conn is not None:
+        cur = conn.cursor()
+        for i in range(len(table)):
+            map_query = "SELECT end_name FROM {0} WHERE start_name=?".format("map_" + str(i+1))
+            node_query = "SELECT * FROM {0} WHERE node_name IN (?)".format("nodes_" + str(i+1))
+            for j in range(len(sample_paths)):
+                path, s = sample_paths[j]
+                cur.execute(map_query, path[-1] + "." + str(s))
+                rows = cur.fetchall()
+                relevant_nodes = cur.execute(node_query, rows)
+                count_arr = [x[1] for x in relevant_nodes]
+                if len(count_arr) == 0:
+                    print("Lost a path :(")  # Really should never happen, unless layer has an empty entry
+                choice = np.random.uniform(0, sum(count_arr))
+                sample_ind = np.arange(len(count_arr))[
+                    np.asanyarray([sum(count_arr[:x + 1]) >= choice for x in range(len(count_arr))])][0]
+                # Set new path_k and append next step in path
+                name, state = relevant_nodes[choice][0].split(".")
+                path.append(name)
+                sample_paths[j][1] = state
+    else:
+        rev_edge_maps = []  # Keep track of backtracking edge maps for sampling
+        # table[-1][num_states-1][''] = 1
+        for i in range(1, len(table)):  # Go through bottom up (always subtract i)
+            edge_map = [collections.defaultdict(list) for k in range(num_states)]
+            ind = len(table) - i - 1
+            for s in range(num_states):
+                for path in edge_dicts[ind][s]:
+                    for tup in edge_dicts[ind][s][path]:
+                        if tup[0] in table[ind][tup[1]] and table[ind+1][s][path] > 0:
+                            table[ind][tup[1]][tup[0]] += table[ind+1][s][path]
+                            edge_map[tup[1]][tup[0]].append((path, s, table[ind+1][s][path]))
+            rev_edge_maps.append(edge_map)
+        rev_edge_maps = list(reversed(rev_edge_maps))
+        # for y in range(num_states - 1):  # Allstates except the first one
+        #     sample_paths.append([])  # for s=1,...2(k-1), the init path has no districts
+        for i in range(len(rev_edge_maps)):
+            for j in range(len(sample_paths)):
+                path = sample_paths[j][0]
+                path_k = sample_paths[j][1]
+                count_arr = [x[2] for x in rev_edge_maps[i][path_k][path[-1]]]
+                if len(count_arr) == 0:
+                    print("Lost a path :(")  # Really should never happen, unless layer has an empty entry
+                choice = np.random.uniform(0, sum(count_arr))
+                sample_ind = np.arange(len(count_arr))[
+                    np.asanyarray([sum(count_arr[:x + 1]) >= choice for x in range(len(count_arr))])][0]
+                # Set new path_k and append next step in path
+                new_step, new_k, c = rev_edge_maps[i][path_k][path[-1]][sample_ind]
+                sample_paths[j][0].append(new_step)
+                sample_paths[j][1] = new_k
+            # print("Currently have {0} paths".format(len(sample_paths)))
     # print(sample_paths)
-    return sample_paths, table[0][0]['']
+    return sample_paths, table[0][0][''] if conn is None else 0
 
 
 # @profile
@@ -95,7 +118,7 @@ def count_non_int_paths(face_list, outer_boundary, cont_sections, k):
     sample_tree[0][0][init_path] = [1, []]  # in the first layer, only s=0 has anything
     prev_sect = cont_sections[-1]
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
-    num_samples = 10000
+    num_samples = 1000
     overhead = 8
     subtree_bound = overhead + 20
     # sample_paths[s][i] is the i'th sampled path in state s
@@ -757,24 +780,44 @@ def find_motzkin_paths_unrestr(h, w, n, m_dict):
     return
 
 
-def allocate_table(face_list, outer_boundary, cont_sections, k):
+def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Connection=None):
     # Put the one in first
     # How should I keep track of contiguous sections? - build up
     # How to find edge relations? - top down and reverse
     # How should I enumerate all Motzkin paths? - Use recursive method to create strings for each section and then
-    # take the cartesian product
     big_table = []
+    # take the cartesian product
+    if conn is not None:
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS nodes_0 (node_name text PRIMARY KEY, _count integer);")
+        cur.execute("INSERT INTO nodes_0 (node_name, _count) VALUES (?, 0)", ('',))
+        conn.commit()
+        big_table.append([])  # for counting
     num_states = 2 * (k - 1) + 1  # The number of possible states the boundary can be at
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
     for i in range(len(cont_sections)-1):
         cur_sect = cont_sections[i]
         path_dict = [collections.defaultdict() for x in range(num_states)]
+        if conn is not None:
+            sql_create_table = """CREATE TABLE IF NOT EXISTS {0} (
+                                                                node_name text PRIMARY KEY,
+                                                                _count integer
+                                                            ); """.format("nodes_" + str(i+1))
+            cur.execute(sql_create_table)
+            conn.commit()
+            big_table.append([])  # for counting
+        else:
+            big_table.append(path_dict)
         # gc.collect()
         for s in range(len(path_dict)):  # state can be 0,1,...,num_states
             # Assumes len(cur_sect)==1, which should always be true, but code is built more generally
             create_labellings_one_section(path_dict[s], cur_sect[0], s)
-        big_table.append(path_dict)
-        if i % 20 == 0:
+            if conn is not None:
+                sql_insert = "INSERT INTO {0}(node_name,_count) VALUES(?,?)".format("nodes_" + str(i))
+                for name in path_dict[s].keys():
+                    cur.execute(sql_insert, [name + "." + str(s), 0])
+                conn.commit()
+        if i % 10 == 0:
             print("Populating teble entry {0}/{1}".format(i, len(cont_sections)))
     end_layer = [collections.defaultdict() for x in range(num_states)]
     end_layer[-1][''] = 1
@@ -783,7 +826,7 @@ def allocate_table(face_list, outer_boundary, cont_sections, k):
     # Generate edge relations
     edge_maps = []  # maintain a list of each layer's path_maps
     for i in range(len(cont_sections)):
-        if i % 20 == 0:
+        if i % 10 == 0:
             print("Generating path maps for layer {0}/{1}".format(i, len(cont_sections)))
         next_sect = cont_sections[i]
         prev_sect = cont_sections[i-1] if i > 0 else [[]]
@@ -823,6 +866,9 @@ def allocate_table(face_list, outer_boundary, cont_sections, k):
         mapping = [mapping.index(x) for x in range(len(mapping))]
         # A mapping of paths in next_dict to their "neighbors" in prev_dict that we save in edge_maps
         path_map = [collections.defaultdict(list) for x in range(num_states)]
+        # For the database, store each individual edge as a separate entry
+        if conn is not None:
+            flat_path_map = dict()
         print("Working on section {0} with length {1}".format(i, len(next_flattened_sections))) if debug else ""
         print("Current face: " + str(face)) if debug else ""
         print("New location: " + str(new_loc)) if debug else ""
@@ -846,7 +892,7 @@ def allocate_table(face_list, outer_boundary, cont_sections, k):
                         path_map[s][path1].append((path, s))
                     for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
                         string_to_add = '0' * ind1 + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (
-                                    len(new_loc) - ind2 - 1)
+                                len(new_loc) - ind2 - 1)
                         path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
                         # path1 = next_path[:index] + string_to_add + next_path[index:]
                         if path1 in next_dict[s]:
@@ -951,6 +997,7 @@ def allocate_table(face_list, outer_boundary, cont_sections, k):
                         raise Exception("Failed to match a 3 to a 2 or a 2 to 3.")
                     if path1 in next_dict[s]:
                         path_map[s][path1].append((path, s))
+
                     # if path1 not in prev_dict:
                     #     print(path1)
                 # labels is reversed from the path string due to orientation of faces - NOT ALWAYS???
@@ -963,7 +1010,23 @@ def allocate_table(face_list, outer_boundary, cont_sections, k):
                     # raise Exception("Theoretically impossible case occurred, we closed a loop.")
                 else:
                     raise Exception("Invalid labels on step location")
-        edge_maps.append(path_map)
+        if conn is not None:
+            sql_create_table = """CREATE TABLE IF NOT EXISTS {0} (
+                                                    start_node text,
+                                                    end_node text,
+                                                    FOREIGN KEY (start_node) REFERENCES {1} (node_name),
+                                                    FOREIGN KEY (end_node) REFERENCES {2} (node_name)
+                                                ); """.format("map_"+str(i), "nodes_"+str(i-1), "nodes_"+str(i))
+            cur.execute(sql_create_table)
+            conn.commit()
+            sql_insert = "INSERT INTO {0}(start_node,end_node) VALUES(?,?)".format("map_" + str(i))
+            for s in path_map:
+                for source in path_map[s]:
+                    for target in path_map[s][source]:
+                        cur.execute(sql_insert, [source + "." + str(s), target[0] + "." + str(target[1])])
+            conn.commit()
+        else:
+            edge_maps.append(path_map)
     first_layer = [{'': 0} for x in range(num_states)]
     big_table = [first_layer] + big_table
     return big_table, edge_maps
@@ -1163,12 +1226,16 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         shapefile = root+"_proc.shp"
         gdf.to_file(shapefile, encoding='UTF-8')
         g_data = adjacency_from_shp(shapefile)
+        # Extra bs for sample
+        # g_data[12].append(13)
+        # g_data[12].remove(22)
+        # g_data[13].append(12)
+        # g_data[22].remove(12)
         loc_df = gpd.read_file(shapefile, encoding='UTF-8')
         # loc_df['centroid_column'] = loc_df.centroid
         # centers = loc_df.set_geometry('centroid_column')
         # centers.set_index('OBJECTID', inplace=True)
         # print(centers)
-        h = nx.DiGraph(incoming_graph_data=g_data)
         # y_locs = {x: centers.loc[x]['centroid_column'].y for x in h.nodes}
         # stddev = np.std(np.asanyarray(list(y_locs.values())))
         # center = np.mean(
@@ -1183,10 +1250,11 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
                     to_remove.append(v)
             if len(to_remove) == 0:
                 break
-            print(to_remove)
+            print("Removing the vertices {0} because they have degree 1".format(to_remove))
             for v in to_remove:
                 g_data[g_data[v][0]].remove(v) if len(g_data[v]) > 0 else ""
                 g_data.pop(v)
+        h = nx.DiGraph(incoming_graph_data=g_data)
         success, counterexample = nx.check_planarity(h, counterexample=True)
         while not success:
             # spring layouts look somewhat normal-- we cannot get a near planar layout, because that can only be built from
@@ -1209,18 +1277,11 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         g = counterexample
         positions = nx.planar_layout(g)
         # Remove any newly created islands or dangling edges
-        while True:
-            to_remove = []
-            for v in g:
-                if len(g[v]) <= 1:
-                    to_remove.append(v)
-            if len(to_remove) == 0:
-                break
-            print(to_remove)
-            g.remove_nodes_from(to_remove)
-            # for v in to_remove:
-            #     g_data[g_data[v][0]].remove(v) if len(g_data[v]) > 0 else ""
-            #     g_data.pop(v)
+        # Make sure the graph only has one connected component
+        cocos = list(nx.connected_components(g))
+        if len(cocos) > 1:  # just remove the islands
+            max_ind = np.argmax([len(coco) for coco in cocos])
+            g = generate_face_order.make_subgraph(g, cocos[max_ind])  # Always the biggest
         # graph is good: save it if it hasn't been saved
         if not os.path.exists(root + ".adjlist"):
             nx.write_adjlist(g, root+".adjlist")
@@ -1258,18 +1319,20 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         plt.show()
         print("Error: Adjacency graph is not planar, exiting...")
         exit(0)
-    g.check_structure()
+    # g.check_structure()
 
     # start the algorithm!
     exit_edge = (132, 771)
     start_edge = (41, 10)
-    outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
-                     key=lambda x: len(x))
+    # exit_edge = (11,12)
+    # start_edge = (12,13)
+    # outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
+    #                  key=lambda x: len(x))
     cts = []
     efficiencies = []
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
-    k = 4
+    k = 2
     num_samples = 100
     cont_sections, count, sample_paths, outer_boundary, h2 = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, root, recalculate)
     if len(sample_paths[-1]) == 0:
@@ -1328,9 +1391,11 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     # exit_edge = (71, 74)
     # start_edge = (46, 48)
     outer_face_edge = exit_edge  # The edge where the outer face is cut
+    geom_dict = {key: generate_face_order.Point(positions[key]) for key in positions}
+
     # Order the faces according to face_order
-    outer_face = max([g.traverse_face(*outer_face_edge), g.traverse_face(outer_face_edge[1], outer_face_edge[0])],
-                     key=lambda x: len(x))
+    outer_face = min([g.traverse_face(*outer_face_edge), g.traverse_face(outer_face_edge[1], outer_face_edge[0])],
+                     key=lambda x: len(x) if all(generate_face_order.vert_in_face(g.nodes, x, positions, geom_dict)) else np.infty)
     # outer_face.append(outer_face_edge)
     start_boundary_list = []
     start_boundary_labels = []
@@ -1346,7 +1411,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     face_dict = {}
     # Clean bad/unnecessary parts of the graph
     start_boundary_list, h2 = clean_graph(exit_edge, face_dict, g, positions, start_boundary_labels,
-                                          start_boundary_list, start_edge)
+                                          start_boundary_list, start_edge, geom_dict)
     if draw:
         # ax = plt.subplot(121)
         # plt.sca(ax)
@@ -1369,7 +1434,6 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         plt.savefig(root)
         exit()
 
-    geom_dict = {key: generate_face_order.Point(positions[key]) for key in positions}
 
     if not os.path.exists(root + ".order") or recalculate:
         outer_face = min([h2.traverse_face(*start_edge), h2.traverse_face(start_edge[1], start_edge[0])],
@@ -1377,7 +1441,7 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         outer_face_edges = {(outer_face[i], outer_face[(i + 1) % len(outer_face)]) for i in range(len(outer_face))}
         rev_outer_face_edges = {(outer_face[(i + 1) % len(outer_face)], outer_face[i]) for i in range(len(outer_face))}
         face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict, outer_face_edges.union(rev_outer_face_edges))
-        with open(root + ".order", "x") as out_file:
+        with open(root + ".order", "w") as out_file:
             for f in face_order:
                 for x in f:
                     out_file.write(str(x) + ',')
@@ -1388,12 +1452,12 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
             face_order = list([list([int(y) for y in x[:-2].split(',')]) for x in face_order])
 
     # set start_edge and end_edge according to the traversal
-    start_edge = tuple(x for x in face_order[0] if x in outer_face)
-    exit_edge = tuple(x for x in face_order[-1] if x in outer_face)
-    if not generate_face_order.same_face(h2.traverse_face(*start_edge), outer_face):
-        start_edge = (start_edge[1], start_edge[0])
-    if not generate_face_order.same_face(h2.traverse_face(*exit_edge), outer_face):
-        exit_edge = (exit_edge[1], exit_edge[0])
+    # start_edge = tuple(x for x in face_order[0] if x in outer_face)
+    # exit_edge = tuple(x for x in face_order[-1] if x in outer_face)
+    # if not generate_face_order.same_face(h2.traverse_face(*start_edge), outer_face):
+    #     start_edge = (start_edge[1], start_edge[0])
+    # if not generate_face_order.same_face(h2.traverse_face(*exit_edge), outer_face):
+    #     exit_edge = (exit_edge[1], exit_edge[0])
     face_order = orient_faces(face_order, h2, positions, start_edge)
     # Test that face_order faces actually exist
     # for face in face_order:
@@ -1469,11 +1533,18 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     # exit(0)
     print(face_list)
     print("Starting table allocation and edge map creation.")
-    table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr)
+
+    db_name = root + '_sql.db'
+    if not os.path.exists(db_name):
+        fd = open(db_name, "x")
+        fd.close()
+    conn = sqlite3.connect(db_name)
+    table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr, conn=conn)
     # np.save('saved_table', table)
     # np.save('saved_table', table)
     print("Finished setup: " + str(time.time()))
     sample_paths, count = count_non_int_paths_w_table(table, edge_maps, num_distr, num_samples)
+    conn.close()
     trimmed_sample_paths = list([p[0] for p in sample_paths])
     # for path in sample_paths:
     #     if path[1] == 2*(num_distr-1)-1:
@@ -1496,12 +1567,10 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
     wait_queue = []
     face_order_index = 0
     while face_order_index < len(face_order) or len(wait_queue) > 0:
-        if face_order_index == 111:
-            print("ok wth")
         if len(cont_sections) > 0:
             sect_boundary = [x[0] for x in cont_sections[-1][0]] + [cont_sections[-1][0][-1][1]]
             if any(sect_boundary.count(x) > 1 for x in sect_boundary):
-                print("fack")
+                raise BaseException("Boundary got messed up.")
             for x in range(2, len(sect_boundary)):
                 for offset in range(2, min(x, 10)):
                     if sect_boundary[x-offset] in g[sect_boundary[x]]:
@@ -1714,21 +1783,15 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
     return cont_sections, face_list
 
 
-def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_boundary_labels, start_boundary_list, start_edge):
-    # Make sure the graph only has one connected component
-    cocos = list(nx.connected_components(g))
-    if len(cocos) > 1:  # just remove the islands
-        for i in range(len(cocos)-1):
-            g.remove_nodes_from(cocos[i+1])
-            for f_name, f in face_dict.items():
-                face_dict.pop(f_name) if any([x in cocos[i+1] for x in f]) else ""
+def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_boundary_labels, start_boundary_list, start_edge, geom_dict):
     # Some faces have self loops, we can remove the inner loops and all vertices within
     verts_to_clean = set()
     points_to_keep = set()
     for edge in g.edges:
         sorted_edge = sorted(edge, key=lambda x: positions[x][1])  # unnecessary to do this I think
         face = g.traverse_face(sorted_edge[1], sorted_edge[0])  # Traverse clockwise
-        if len(face) > 30:  # Hardcode outer face
+        # if all([generate_face_order.vert_in_face(x, face, positions, geom_dict) for x in g.nodes]):  # Hardcode outer face
+        if len(face) > 30:
             continue
         face = ensure_ccw(face, positions)
         if len(np.unique(face)) != len(face):  # bad face
@@ -2199,7 +2262,7 @@ def adjacency_from_shp(shapefile):
         # get 'not disjoint' countries
         # would be queen adjacency
         neighbors = gdf[gdf.geometry.touches(precinct.geometry)]
-        neighbors = neighbors[neighbors.geometry.intersection(precinct.geometry).length > .001].index.tolist()
+        neighbors = neighbors[neighbors.geometry.intersection(precinct.geometry).length > .00001].index.tolist()
         # remove own name of the country from the list
         neighbors = [name for name in neighbors if index != name]
         g_data[index] = neighbors
@@ -2294,7 +2357,7 @@ if __name__ == '__main__':
     #     return "sum" if series.dtype == "int64" else "mode"
     #
     # gdf = gdf.dissolve(by="TRACT", aggfunc="cust_agg")
-    # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False)
+    # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False, recalculate=True)
     enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=False)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
