@@ -19,6 +19,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
+import pandas as pd
+
 import generate_face_order
 import poly_point_isect
 import sqlite3
@@ -1218,8 +1220,13 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         #     g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
         # Explode the geometries
         gdf = gpd.read_file(shapefile, encoding='UTF-8')
+        cbg_map = pd.read_csv("data/wi_cong_dist/Governor's LC Congressional.csv", sep=',').to_numpy()
+        cbg_map = {str(x[0])[:-3]: x[1] for x in cbg_map}
+        gdf['CDISTRICT'] = list(map(lambda x: cbg_map[x], gdf['GEOID20']))
+        gdf = gdf[[x in {4,5} for x in gdf["CDISTRICT"]]]  # 1,4,5
         # dissolve into higher level
         gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
+        # gdf = gdf.dissolve(by="COUNTY", aggfunc="sum")
         gdf = gdf.reset_index()
         gdf = gdf.explode(ignore_index=True)
         gdf = gdf.groupby(by='TRACT').first()
@@ -1322,8 +1329,12 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     # g.check_structure()
 
     # start the algorithm!
-    exit_edge = (132, 771)
-    start_edge = (41, 10)
+    # exit_edge = (308, 306)
+    # start_edge = (308, 306)
+    exit_edge = (404, 403)
+    start_edge = (404, 403)
+    # exit_edge = (6, 48)
+    # start_edge = (14, 37)
     # exit_edge = (11,12)
     # start_edge = (12,13)
     # outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
@@ -1333,8 +1344,8 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
     k = 2
-    num_samples = 100
-    cont_sections, count, sample_paths, outer_boundary, h2 = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, root, recalculate)
+    num_samples = 10000
+    cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
@@ -1345,9 +1356,9 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         sums = [0,]*k
         for i in range(len(comps)):
             for v in comps[i]:
-                sums[i] += loc_df.loc[v]['PERSONS']
+                sums[i] += loc_df.loc[v]['POP100']
         # Population count is unrealistic for exploded graphs, so ignore?
-        if np.max(sums) - np.min(sums) > 50000:
+        if np.max(sums) - np.min(sums) > 50000 or ct > 65:
             # print("Refusing a population {1} standard deviation of {0}".format(np.std(sums), sums))
             continue
         print("Found a good partition {0} with std {1}".format(sums, np.std(sums)))
@@ -1367,22 +1378,22 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     #                                                                                         np.std(efficiencies),
     #                                                                                         len(efficiencies)))
     print("Path lengths: {0}\n Population gaps: {1}".format(cts, pops))
-    sum1 = 0
-    sum2 = 0
-    g1 = []
-    g2 = []
-    for v in h2.nodes:
-        if loc_df.loc[v]['DISTRICT'] == '27':
-            # sum1 += loc_df.loc[v]['PERSONS'] - loc_df.loc[v]['WHITE']
-            sum1 += loc_df.loc[v]['PERSONS']
-            g1.append(v)
-        else:
-            # sum2 += loc_df.loc[v]['PERSONS'] - loc_df.loc[v]['WHITE']
-            sum2 += loc_df.loc[v]['PERSONS']
-            g2.append(v)
+    # sum1 = 0
+    # sum2 = 0
+    # g1 = []
+    # g2 = []
+    # for v in h2.nodes:
+    #     if loc_df.loc[v]['DISTRICT'] == '27':
+    #         # sum1 += loc_df.loc[v]['PERSONS'] - loc_df.loc[v]['WHITE']
+    #         sum1 += loc_df.loc[v]['PERSONS']
+    #         g1.append(v)
+    #     else:
+    #         # sum2 += loc_df.loc[v]['PERSONS'] - loc_df.loc[v]['WHITE']
+    #         sum2 += loc_df.loc[v]['PERSONS']
+    #         g2.append(v)
     # print("True diversity was: " + str(math.fabs(sum2 - sum1)))
-    print("True efficiency gap was: " + str(calculate_eff_gap(g1, g2, loc_df, sum1, sum2)))
-    print("True pop gap was: " + str(abs(sum2 - sum1)))
+    # print("True efficiency gap was: " + str(calculate_eff_gap(g1, g2, loc_df, sum1, sum2)))
+    # print("True pop gap was: " + str(abs(sum2 - sum1)))
     print("Finish time: " + str(time.time()))
     return count
 
@@ -1418,14 +1429,14 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         plt.figure(figsize=(65, 65))
         nx.draw(h2, pos=positions, node_size=30, with_labels=True, font_size=8, linewidths=0,
                 width=.2)
-        frontiers = [[41, 15, 10], [59, 37, 15, 10], [75, 71, 59, 37, 15, 10], [121, 124, 72, 30, 2, 10], [131, 124, 72, 30, 2, 10], [130, 129, 30, 2, 10], [128, 30, 2, 10], [137, 30, 2, 10], [143, 141, 137, 30, 2, 10], [142, 141, 137, 30, 2, 10], [147, 141, 137, 30, 2, 10], [146, 136, 137, 30, 2, 10], [94, 93, 136, 137, 30, 2, 10], [39, 38, 46, 136, 137, 30, 2, 10], [36, 38, 46, 136, 137, 30, 2, 10], [14, 38, 46, 136, 137, 30, 2, 10], [14, 38, 46, 136, 137, 30, 2, 1, 816], [14, 38, 46, 136, 137, 30, 2, 1, 816, 707, 704], [14, 38, 46, 136, 137, 30, 2, 1, 816, 707, 705, 703], [14, 11, 661, 663, 664, 667, 670, 690, 689, 686, 677, 674], [151, 486, 284, 473, 495, 496, 782, 687, 686, 677, 674], [151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [152, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [127, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [127, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686], [126, 70, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686], [115, 60, 135, 139, 291, 284, 473, 495, 496, 782, 687, 686], [132, 135, 139, 291, 284, 473, 495, 496, 782, 687, 686], [132, 135, 139, 291, 284, 473, 495, 496, 782, 781], [132, 135, 139, 291, 284, 473, 495, 496, 783], [132, 135, 139, 291, 284, 473, 784], [132, 135, 139, 291, 284, 473, 785], [132, 135, 139, 291, 284, 283, 810], [132, 135, 139, 291, 288, 282, 320, 807], [132, 135, 139, 291, 288, 282, 320, 806], [132, 135, 139, 291, 288, 282, 320, 319], [132, 135, 139, 291, 288, 282, 320, 262, 263, 253], [132, 135, 140, 298, 244, 252], [132, 135, 140, 298, 306, 310], [132, 135, 759, 756, 744, 736], [132, 135, 759, 756, 744, 743, 742], [132, 135, 759, 756, 788, 792, 793], [132, 135, 759, 756, 788, 797], [132, 135, 759, 768]]
-        edge_bunch = []
-        edge_cmap = []
-        for i in range(len(frontiers)):
-            frontier = frontiers[i]
-            edge_bunch += list([(frontier[f], frontier[f+1]) for f in range(len(frontier)-1)])
-            edge_cmap += [i,]*(len(frontier)-1)
-        nx.draw_networkx_edges(h2, pos=positions, edgelist=edge_bunch, edge_color=edge_cmap, edge_cmap=plt.cm.plasma)
+        # frontiers = [[41, 15, 10], [59, 37, 15, 10], [75, 71, 59, 37, 15, 10], [121, 124, 72, 30, 2, 10], [131, 124, 72, 30, 2, 10], [130, 129, 30, 2, 10], [128, 30, 2, 10], [137, 30, 2, 10], [143, 141, 137, 30, 2, 10], [142, 141, 137, 30, 2, 10], [147, 141, 137, 30, 2, 10], [146, 136, 137, 30, 2, 10], [94, 93, 136, 137, 30, 2, 10], [39, 38, 46, 136, 137, 30, 2, 10], [36, 38, 46, 136, 137, 30, 2, 10], [14, 38, 46, 136, 137, 30, 2, 10], [14, 38, 46, 136, 137, 30, 2, 1, 816], [14, 38, 46, 136, 137, 30, 2, 1, 816, 707, 704], [14, 38, 46, 136, 137, 30, 2, 1, 816, 707, 705, 703], [14, 11, 661, 663, 664, 667, 670, 690, 689, 686, 677, 674], [151, 486, 284, 473, 495, 496, 782, 687, 686, 677, 674], [151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [152, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [127, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686, 676], [127, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686], [126, 70, 66, 151, 486, 284, 473, 495, 496, 782, 687, 686], [115, 60, 135, 139, 291, 284, 473, 495, 496, 782, 687, 686], [132, 135, 139, 291, 284, 473, 495, 496, 782, 687, 686], [132, 135, 139, 291, 284, 473, 495, 496, 782, 781], [132, 135, 139, 291, 284, 473, 495, 496, 783], [132, 135, 139, 291, 284, 473, 784], [132, 135, 139, 291, 284, 473, 785], [132, 135, 139, 291, 284, 283, 810], [132, 135, 139, 291, 288, 282, 320, 807], [132, 135, 139, 291, 288, 282, 320, 806], [132, 135, 139, 291, 288, 282, 320, 319], [132, 135, 139, 291, 288, 282, 320, 262, 263, 253], [132, 135, 140, 298, 244, 252], [132, 135, 140, 298, 306, 310], [132, 135, 759, 756, 744, 736], [132, 135, 759, 756, 744, 743, 742], [132, 135, 759, 756, 788, 792, 793], [132, 135, 759, 756, 788, 797], [132, 135, 759, 768]]
+        # edge_bunch = []
+        # edge_cmap = []
+        # for i in range(len(frontiers)):
+        #     frontier = frontiers[i]
+        #     edge_bunch += list([(frontier[f], frontier[f+1]) for f in range(len(frontier)-1)])
+        #     edge_cmap += [i,]*(len(frontier)-1)
+        # nx.draw_networkx_edges(h2, pos=positions, edgelist=edge_bunch, edge_color=edge_cmap, edge_cmap=plt.cm.plasma)
         plt.show()
         # G2 = h.subgraph([106,0,3,4,5,6,7,8,9,14,107,13,51,52])
         # nx.draw(G2, pos=positions, with_labels=True)
@@ -1440,7 +1451,8 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
                          key=lambda x: len(x) if all(generate_face_order.vert_in_face(h2.nodes, x, positions, geom_dict)) else np.infty)
         outer_face_edges = {(outer_face[i], outer_face[(i + 1) % len(outer_face)]) for i in range(len(outer_face))}
         rev_outer_face_edges = {(outer_face[(i + 1) % len(outer_face)], outer_face[i]) for i in range(len(outer_face))}
-        face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict, outer_face_edges.union(rev_outer_face_edges))
+        # face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict, outer_face_edges.union(rev_outer_face_edges))
+        face_order = generate_face_order.order_faces(h2, start_edge, positions, geom_dict, {start_edge, (start_edge[1], start_edge[0])})
         with open(root + ".order", "w") as out_file:
             for f in face_order:
                 for x in f:
@@ -1538,20 +1550,21 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
     if not os.path.exists(db_name):
         fd = open(db_name, "x")
         fd.close()
-    conn = sqlite3.connect(db_name)
+    # conn = sqlite3.connect(db_name)
+    conn = None
     table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr, conn=conn)
     # np.save('saved_table', table)
     # np.save('saved_table', table)
     print("Finished setup: " + str(time.time()))
     sample_paths, count = count_non_int_paths_w_table(table, edge_maps, num_distr, num_samples)
-    conn.close()
+    conn.close() if conn is not None else ""
     trimmed_sample_paths = list([p[0] for p in sample_paths])
     # for path in sample_paths:
     #     if path[1] == 2*(num_distr-1)-1:
     #         trimmed_sample_paths.append(path[0])
     # count, sample_paths = count_non_int_paths(face_list, start_boundary_list, cont_sections, num_distr)
     print("Counted " + str(count) + " non-self-intersecting paths")
-    return cont_sections, count, trimmed_sample_paths, start_boundary_list, h2
+    return cont_sections, count, trimmed_sample_paths, start_boundary_list, h2, face_list
 
 
 def create_face_order(start_edge, face_order, positions, start_boundary_list, g, geom_dict):
@@ -1564,6 +1577,7 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
     prev_ver = [start_edge]
     # A solution to incorrect face traversals is using a wait queue. This takes impossible faces, adds them to a queue,
     # and inserts them whenever they become possible
+    # [238, 239, 316, 319, 242]
     wait_queue = []
     face_order_index = 0
     while face_order_index < len(face_order) or len(wait_queue) > 0:
@@ -1616,15 +1630,15 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
             # Algorithm messed up, add to queue-- the second condition checks for closed loops
             wait_queue.append(face)
             continue
-        if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in cur_boundary]) - \
+        elif np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in cur_boundary]) - \
                 np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) > 2:
             # catch cases that use the outer boundary
-            if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in cur_boundary]) - \
-                    np.count_nonzero([(face[x], face[(x+1) % len(face)]) in cur_boundary for x in range(len(face))]) <= 2:
-                pass
-            else:
-                wait_queue.append(face)
-                continue
+            # if np.count_nonzero([any([face[x] in e for x in range(len(face))]) for e in prev_ver]) - \
+            #         np.count_nonzero([(face[x], face[(x+1) % len(face)]) in prev_ver for x in range(len(face))]) <= 2:
+            #     pass
+            # else:
+            wait_queue.append(face)
+            continue
         face = list(reversed(face))
         # Make sure orientation of face is good
         m_ind = 0  # Index of the maximum vertex in the face that leaves the current boundary
@@ -1788,10 +1802,10 @@ def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_bo
     verts_to_clean = set()
     points_to_keep = set()
     for edge in g.edges:
-        sorted_edge = sorted(edge, key=lambda x: positions[x][1])  # unnecessary to do this I think
-        face = g.traverse_face(sorted_edge[1], sorted_edge[0])  # Traverse clockwise
+        # sorted_edge = sorted(edge, key=lambda x: positions[x][1])  # unnecessary to do this I think
+        face = g.traverse_face(*edge)  # Traverse clockwise
         # if all([generate_face_order.vert_in_face(x, face, positions, geom_dict) for x in g.nodes]):  # Hardcode outer face
-        if len(face) > 30:
+        if len(face) > 25:
             continue
         face = ensure_ccw(face, positions)
         if len(np.unique(face)) != len(face):  # bad face
@@ -1799,10 +1813,12 @@ def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_bo
             point = face[point_ind]
             i1 = face.index(point)  # First occurence
             i2 = face.index(point, i1 + 1)  # Second
-            verts_to_clean = verts_to_clean.union(set(face[i1 + 1:i2]))
+            f1 = face[i1:i2]  # option 1 for bad face
+            f2 = face[i2:] + face[:i1]  # option 2
+            bad_face, good_face = (f1, f2) if all(generate_face_order.vert_in_face(f1, f2, positions, geom_dict)) else (f2, f1)
+            verts_to_clean = verts_to_clean.union(set(bad_face[1:]))
             points_to_keep.add(point)
-            face_to_add = face[:i1] + face[i2:]
-            face_dict[str(sorted(face_to_add))] = face_to_add
+            face_dict[str(sorted(good_face))] = good_face
         else:
             face_dict[str(sorted(face))] = face
     # Remove boundary loops
@@ -1844,6 +1860,8 @@ def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_bo
                 else:
                     start_boundary_list = start_boundary_list[i2:i1 + 1]
                     start_boundary_labels = start_boundary_labels[i2:i1 + 1]
+                # reset flat_boundary
+                flat_boundary = [edge[0] for edge in start_boundary_list] + [start_boundary_list[-1][1]]
     # Deal with bad faces
     while True:
         to_rem = []
@@ -1907,17 +1925,18 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
             if len(exits) > 0:  # only take one arbitrary exit per outer face
                 exits = set([exits.pop()])
             edges = edges.union(exits)
-            edges = edges.union({(e[1], e[0]) for e in exits})
+            # edges = edges.union({(e[1], e[0]) for e in exits})
         edges = edges.union(set([flat_sect[i] for i in range(len(assignment)) if assignment[i] != '0']))
-        edges = edges.union(
-            set([(flat_sect[i][1], flat_sect[i][0]) for i in range(len(assignment)) if assignment[i] != '0']))
+        # edges = edges.union(
+        #     set([(flat_sect[i][1], flat_sect[i][0]) for i in range(len(assignment)) if assignment[i] != '0']))
         prev_ones = cur_ones
-    g.remove_edges_from(edges)
+    g = generate_face_order.remove_planar_edges(g, edges)
+    # g.remove_edges_from(edges)
     comps = list(nx.connected_components(g))
     draw_maps(comps, edges, g, loc_df, positions, draw2, draw3)
     if len(comps) != k:
         print(path) if debug else ""
-        print("Produced {0} components".format(len(comps)))
+        print("Produced {0} components".format(len(comps))) if debug else ""
         # return len(edges), "", ""
     return len(edges), comps, edges, g
 
@@ -1936,7 +1955,7 @@ def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
         # loc_df['NEW_DISTRICT'] = list(map(lambda x: 2 if x in comps[0] else (1 if x in comps[1] else 0), loc_df.index))
         # print(loc_df['NEW_DISTRICT'])
         fig, ax = plt.subplots()
-        loc_df.plot(column='NEW_DISTRICT', ax=ax, cmap="Blues")
+        loc_df.plot(column='NEW_DISTRICT', ax=ax, cmap="viridis")
         plt.show()
 
 
@@ -2358,7 +2377,7 @@ if __name__ == '__main__':
     #
     # gdf = gdf.dissolve(by="TRACT", aggfunc="cust_agg")
     # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False, recalculate=True)
-    enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=False)
+    enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=True)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
     # out_dict = {}
