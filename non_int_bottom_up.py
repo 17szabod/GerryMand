@@ -19,6 +19,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
+import pandas
 import pandas as pd
 
 import generate_face_order
@@ -1280,11 +1281,13 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         # gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
         gdf = gdf.dissolve(by="COUNTY", aggfunc="sum")
         gdf = gdf.reset_index()
-        # gdf = gdf.explode(ignore_index=True)
+        gdf = gdf.explode(ignore_index=True)
+        gdf = gdf.reset_index()
         # gdf = gdf.groupby(by='TRACT').first()
         shapefile = root+"_proc.shp"
         gdf.to_file(shapefile, encoding='UTF-8')
         g_data = adjacency_from_shp(shapefile)
+        g_data_og = copy.deepcopy(g_data)
         # Extra bs for sample
         # g_data[12].append(13)
         # g_data[12].remove(22)
@@ -1383,8 +1386,10 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     # start the algorithm!
     # exit_edge = (308, 306)
     # start_edge = (308, 306)
-    # exit_edge = (404, 403)
-    # start_edge = (404, 403)
+    # exit_edge = (415, 417)
+    # start_edge = (415, 417)
+    # exit_edge = (147, 142)
+    # start_edge = (147, 142)
     exit_edge = (6, 48)
     start_edge = (14, 37)
     # exit_edge = (11,12)
@@ -1396,15 +1401,17 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
     k = 2
-    num_samples = 100
+    num_samples = 10
     cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
+    clusters = merge_leaves(g_data_og, h2, loc_df)
     for path in sample_paths:
         ct, comps, edges, new_map = eval_path(path, cont_sections, copy.deepcopy(h2), positions, face_order, outer_boundary, k, loc_df)
         if len(comps) != k:
             continue
+        assign_leaves(clusters, comps, g_data_og)
         sums = [0,]*k
         for i in range(len(comps)):
             for v in comps[i]:
@@ -1448,6 +1455,40 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     # print("True pop gap was: " + str(abs(sum2 - sum1)))
     print("Finish time: " + str(time.time()))
     return count
+
+
+def merge_leaves(g_data_og, h2, loc_df):
+    removed = [[x] for x in loc_df.index if x not in h2.nodes]
+    clusters = list()
+    while len(removed) > 0:
+        elem = removed.pop()
+        new_elem = elem
+        found = False
+        for x in elem:
+            for neighb in g_data_og[x]:
+                for y in removed:
+                    if neighb in y:
+                        new_elem += y
+                        removed.remove(y)
+                        found = True
+        if not found:
+            clusters.append(new_elem)
+        else:
+            removed.append(new_elem)
+    return clusters
+
+
+def assign_leaves(clusters, comps, g_data_og):
+    for cluster in clusters:
+        found = False
+        for i in len(comps):
+            for c in cluster:
+                if any(g_data_og[c] in comps[i]):
+                    comps[i] += cluster
+                    found = True
+                    break
+            if found:
+                break
 
 
 def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples, root, recalculate):
@@ -1995,7 +2036,7 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
     return len(edges), comps, edges, g
 
 
-def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
+def draw_maps(comps, edges, g, loc_df, positions, counter, draw2=False, draw3=False):
     if draw2:
         plt.figure(figsize=(18, 18))
         nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
@@ -2010,6 +2051,7 @@ def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
         # print(loc_df['NEW_DISTRICT'])
         fig, ax = plt.subplots()
         loc_df.plot(column='NEW_DISTRICT', ax=ax, cmap="viridis")
+        plt.savefig()
         plt.show()
 
 
