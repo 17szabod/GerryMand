@@ -42,18 +42,21 @@ def partition(number, p_count):
     return answer
 
 
-def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, conn=None, just_sample=False):
+def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, compactness, conn=None, just_sample=False):
     num_states = 2*(k-1) + 1
     # Sample top down:
-    # sample paths are of the form (0:path, 1:end_state)
-    sample_paths = [{0: [''], 1: 0} for x in range(num_samples)]
+    # sample paths are of the form (0:path, 1:end_state, 2: length)
+    sample_paths = [{0: [''], 1: 0, 2: 0} for x in range(num_samples)]
 
     if conn is not None:
         cur = conn.cursor()
         # count
         if not just_sample:
             # base count
-            cur.execute("UPDATE nodes_{0} set _count=1 WHERE node_name='{1}';".format(len(table)-1, '.' + str(num_states-1)))
+            # cur.execute("UPDATE nodes_{0} set _count=1 WHERE node_name='{1}';".format(len(table)-1, '.' + str(num_states-1)))
+            for cur_length in range(compactness):
+                # Any valid compactness is okay for one count
+                cur.execute("UPDATE nodes_{0} set _count=1 WHERE node_name='{1}';".format(len(table)-1, '.' + str(cur_length) + '.' + str(num_states-1)))
             conn.commit()
             for i in range(len(table)-1):
                 ind = len(table) - i - 1
@@ -91,7 +94,8 @@ def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, conn=None, ju
             for j in range(len(sample_paths)):
                 path = sample_paths[j][0]
                 s = sample_paths[j][1]
-                cur.execute(map_query, (path[-1] + "." + str(s),))
+                length = sample_paths[j][2]
+                cur.execute(map_query, (path[-1] + "." + str(length) + "." + str(s),))
                 rows = cur.fetchall()
                 cur.execute(node_query + "({0})".format(', '.join(['?']*len(rows))), tuple(r[0] for r in rows))
                 relevant_nodes = cur.fetchall()
@@ -102,9 +106,11 @@ def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, conn=None, ju
                 sample_ind = np.arange(len(count_arr))[
                     np.asanyarray([sum(count_arr[:x + 1]) >= choice for x in range(len(count_arr))])][0]
                 # Set new path_k and append next step in path
-                name, state = relevant_nodes[sample_ind][0].split(".")
+                # name, state = relevant_nodes[sample_ind][0].split(".")  # For unrestricted
+                name, length, state = relevant_nodes[sample_ind][0].split(".")
                 path.append(name)
                 sample_paths[j][1] = state
+                sample_paths[j][2] = length
     else:
         rev_edge_maps = []  # Keep track of backtracking edge maps for sampling
         # table[-1][num_states-1][''] = 1
@@ -820,7 +826,7 @@ def find_motzkin_paths_unrestr(h, w, n, m_dict):
     return
 
 
-def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Connection=None, just_sample=False):
+def allocate_table(face_list, outer_boundary, cont_sections, k, compactness, conn: sqlite3.Connection=None, just_sample=False):
     if just_sample:  # conn must then not be None
         cur = conn.cursor()
         cur.execute("select * from sqlite_master where type='table' and tbl_name like 'nodes_%';")
@@ -862,8 +868,15 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
             create_labellings_one_section(path_dict[s], cur_sect[0], s)
             if conn is not None:
                 sql_insert = "INSERT INTO {0}(node_name,_count) VALUES(?,?)".format("nodes_" + str(i))
+                # for name in path_dict[s].keys():
+                #     for cur_length in range(0, compactness):
+                #         cur.execute(sql_insert, [name + "." + str(cur_length) + "." + str(s), 0])
+                # Batch insert is much faster
+                batch = []
                 for name in path_dict[s].keys():
-                    cur.execute(sql_insert, [name + "." + str(s), 0])
+                    for cur_length in range(0, compactness):
+                        batch += [(name + "." + str(cur_length) + "." + str(s), 0),]
+                cur.executemany(sql_insert, batch)
                 conn.commit()
         if i % 10 == 0:
             print("Populating table entry {0}/{1}".format(i, len(cont_sections)))
@@ -921,16 +934,19 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
         if conn is not None:
             next_dict = [dict() for x in range(num_states)]
             for val, c in cur.execute("SELECT * FROM {0}".format("nodes_" + str(i))):
-                p, s = val.split(".")
-                next_dict[int(s)][p] = c
+                p, cur_length, s = val.split(".")
+                next_dict[int(s)][p + "." + cur_length] = c
             # prev_dict = cur.execute("SELECT * FROM {0}".format("nodes_" + str(i-1))) if i > 0 else list(['.' + str(x) for x in range(num_states)])
             if prev_dict is None:
-                prev_dict = [{'': 0} for x in range(num_states)]  # coincidentally still works
+                prev_dict = [{'.' + str(cur_length): 0 for cur_length in range(compactness)} for x in range(num_states)]  # was just 0
         else:
+            # No longer works with compactness
             next_dict = big_table[i]
             prev_dict = big_table[i - 1] if i > 0 else [{'': 0} for x in range(num_states)]
         for s in range(num_states):
-            for path in prev_dict[s].keys():
+            for full_path in prev_dict[s].keys():  # sometimes need the full_path as a key, other times just the path
+                path, cur_length = full_path.split(".")
+                cur_length = int(cur_length)
                 # Find step type (labels)
                 labels = tuple([path[x] for x in label_inds if path[x] != '0'])
                 if len(labels) > 2:  # Too many paths meet, just continue
@@ -940,17 +956,19 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
                 # Add edge to all possible consequences of labels
                 if len(labels) == 0:
                     # Can't have any edge exit if there is no 1 label
-                    path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                    # path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                    path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add) + "." + str(cur_length)
                     # path1 = next_path[:index] + '0' * len(new_loc) + next_path[index:]
                     if path1 in next_dict[s]:
-                        path_map[s][path1].append((path, s))
+                        path_map[s][path1].append((full_path, s))  # don't add anything
                     for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
                         string_to_add = '0' * ind1 + '3' + '0' * (ind2 - ind1 - 1) + '2' + '0' * (
                                 len(new_loc) - ind2 - 1)
-                        path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        # path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        path1 = insert_at_indices(next_path, string_to_add, inds_to_add) + "." + str(cur_length + 2)
                         # path1 = next_path[:index] + string_to_add + next_path[index:]
                         if path1 in next_dict[s]:
-                            path_map[s][path1].append((path, s))
+                            path_map[s][path1].append((full_path, s))  # add 2 edges
                     # If this is surrounded by a 3 and a 2, can we add either a 3-2 or a 2-3?
                     # NO! A 3-2 corresponds to the two paths meeting, while a 2-3 would be a self-intersection, despite
                     # the motzkin path being valid - this is a correct death of a path
@@ -959,16 +977,18 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
                         for exit_ind in range(len(exit_locs)):
                             for ind1 in range(len(new_loc)):
                                 string_to_add = '0' * ind1 + '1' + '0' * (len(new_loc) - 1 - ind1)
-                                path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                # path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                path1 = insert_at_indices(next_path, string_to_add, inds_to_add) + "." + str(cur_length + 1)
                                 if path1 in next_dict[s + 1]:
-                                    path_map[s + 1][path1].append((path, s))
+                                    path_map[s + 1][path1].append((full_path, s))
                 elif len(labels) == 1:
                     for ind1 in range(len(new_loc)):  # Path could just continue in some direction
                         string_to_add = '0' * ind1 + labels[0] + '0' * (len(new_loc) - 1 - ind1)
-                        path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        # path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                        path1 = insert_at_indices(next_path, string_to_add, inds_to_add) + "." + str(cur_length + 1)
                         # path1 = next_path[:index] + string_to_add + next_path[index:]
                         if path1 in next_dict[s]:
-                            path_map[s][path1].append((path, s))
+                            path_map[s][path1].append((full_path, s))  # just continues
                     if s < num_states-1:
                         if '1' in labels:
                             # TODO: Create opportunities for higher degree splits (up to len(face)-2)
@@ -977,14 +997,16 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
                             for ind1, ind2 in itertools.combinations(range(len(new_loc)), 2):  # this preserves order!
                                 string_to_add = '0' * ind1 + '1' + '0' * (ind2 - ind1 - 1) + '1' + '0' * (
                                         len(new_loc) - ind2 - 1)
-                                path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                # path1 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                path1 = insert_at_indices(next_path, string_to_add, inds_to_add) + "." + str(cur_length + 2)
                                 # path1 = next_path[:index] + string_to_add + next_path[index:]
                                 if path1 in next_dict[s + 1]:
-                                    path_map[s + 1][path1].append((path, s))
+                                    path_map[s + 1][path1].append((full_path, s))  # 1->2
                         # Add a potential exit!
                         # index is either 0 or len(path1)-1
                         for exit_ind in range(len(exit_locs)):
-                            path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                            # path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                            path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add) + "." + str(cur_length)
                             count = 0
                             if '1' in labels:  # Simply add 0s into new_loc
                                 pass
@@ -1009,10 +1031,11 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
                                             path1 = path1[:x] + '1' + path1[x + 1:]
                                             break
                             if path1 in next_dict[s + 1]:
-                                path_map[s + 1][path1].append((path, s))
+                                path_map[s + 1][path1].append((full_path, s))  # no new edges
                 elif labels in [('1', '2'), ('2', '1'), ('1', '3'), ('3', '1'), ('2', '2'), ('3', '3'), ('3', '2'),
                                 ('1', '1')]:
                     path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add)
+                    # path1 = insert_at_indices(next_path, '0' * len(new_loc), inds_to_add) + "." + str(cur_length)
                     count = 0
                     # The order of 3-2's and 2-3's change depending on state-- use ones to represent order change
                     if labels == ('3', '2'):  # possible, just combine
@@ -1022,9 +1045,10 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
                             # Might be able to merge-- only merge to one for now TODO: make it more
                             for ind1 in range(len(new_loc)):
                                 string_to_add = '0' * ind1 + '1' + '0' * (len(new_loc) - 1 - ind1)
-                                path2 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                # path2 = insert_at_indices(next_path, string_to_add, inds_to_add)
+                                path2 = insert_at_indices(next_path, string_to_add, inds_to_add) + "." + str(cur_length+1)
                                 if path2 in next_dict[s + 1]:
-                                    path_map[s + 1][path2].append((path, s))
+                                    path_map[s + 1][path2].append((full_path, s))  # 2->1
                         # Either way, we also allow for the 1's to meet without changing the state
                     # Need to find partner and change label:
                     elif '3' in labels:  # 2 will be below it
@@ -1049,8 +1073,9 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
                                     break
                     if count != 0:
                         raise Exception("Failed to match a 3 to a 2 or a 2 to 3.")
+                    path1 += "." + str(cur_length)  # modify only after swapping 2's and 3's
                     if path1 in next_dict[s]:
-                        path_map[s][path1].append((path, s))
+                        path_map[s][path1].append((full_path, s))
 
                     # if path1 not in prev_dict:
                     #     print(path1)
@@ -1074,10 +1099,19 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, conn: sqlite3.Co
             cur.execute(sql_create_table)
             conn.commit()
             sql_insert = "INSERT INTO {0}(start_node,end_node) VALUES(?,?)".format("map_" + str(i-1))
+            # for s in range(len(path_map)):
+            #     for source in path_map[s]:
+            #         for target in path_map[s][source]:
+            #             # Warning: string codes now have two .'s
+            #             cur.execute(sql_insert, [source + "." + str(s), target[0] + "." + str(target[1])])
+            # Batch execute is faster!!
+            batch = []
             for s in range(len(path_map)):
                 for source in path_map[s]:
                     for target in path_map[s][source]:
-                        cur.execute(sql_insert, [source + "." + str(s), target[0] + "." + str(target[1])])
+                        # Warning: string codes now have two .'s
+                        batch += [(source + "." + str(s), target[0] + "." + str(target[1])),]
+            cur.executemany(sql_insert, batch)
             conn.commit()
             prev_dict = next_dict
         else:
@@ -1401,8 +1435,9 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
     k = 2
-    num_samples = 10
-    cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, root, recalculate)
+    compactness = 15
+    num_samples = 100
+    cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, compactness, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
@@ -1417,7 +1452,7 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
             for v in comps[i]:
                 sums[i] += loc_df.loc[v]['POP100']
         # Population count is unrealistic for exploded graphs, so ignore?
-        if np.max(sums) - np.min(sums) > 50000 or ct > 65:
+        if np.max(sums) - np.min(sums) > 500000:
             # print("Refusing a population {1} standard deviation of {0}".format(np.std(sums), sums))
             continue
         print("Found a good partition {0} with std {1}".format(sums, np.std(sums)))
@@ -1491,7 +1526,7 @@ def assign_leaves(clusters, comps, g_data_og):
                 break
 
 
-def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples, root, recalculate):
+def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples, compactness, root, recalculate):
     # exit_edge = (71, 74)
     # start_edge = (46, 48)
     outer_face_edge = exit_edge  # The edge where the outer face is cut
@@ -1647,11 +1682,11 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         fd.close()
     conn = sqlite3.connect(db_name)
     # conn = None
-    table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr, conn=conn, just_sample=True)
+    table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr, compactness, conn=conn, just_sample=False)
     # np.save('saved_table', table)
     # np.save('saved_table', table)
     print("Finished setup: " + str(time.time()))
-    sample_paths, count = count_non_int_paths_w_table(table, edge_maps, num_distr, num_samples, conn=conn, just_sample=True)
+    sample_paths, count = count_non_int_paths_w_table(table, edge_maps, num_distr, num_samples, compactness, conn=conn, just_sample=False)
     conn.close() if conn is not None else ""
     trimmed_sample_paths = list([p[0] for p in sample_paths])
     # for path in sample_paths:
@@ -2036,7 +2071,7 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
     return len(edges), comps, edges, g
 
 
-def draw_maps(comps, edges, g, loc_df, positions, counter, draw2=False, draw3=False):
+def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
     if draw2:
         plt.figure(figsize=(18, 18))
         nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
@@ -2051,7 +2086,7 @@ def draw_maps(comps, edges, g, loc_df, positions, counter, draw2=False, draw3=Fa
         # print(loc_df['NEW_DISTRICT'])
         fig, ax = plt.subplots()
         loc_df.plot(column='NEW_DISTRICT', ax=ax, cmap="viridis")
-        plt.savefig()
+        # plt.savefig()
         plt.show()
 
 
