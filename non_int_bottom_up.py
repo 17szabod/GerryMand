@@ -6,6 +6,11 @@
 # List of dicts?
 # Only main algorithm is bottom up, rest can be top down
 
+# conda activate GerryMand
+# cd C:\Users\user\Documents\Sampling_alg\code\GerryMand
+# python C:\Users\user\Documents\Sampling_alg\code\GerryMand\non_int_bottom_up.py
+
+
 import collections
 import copy
 import functools
@@ -19,7 +24,6 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
-import pandas
 import pandas as pd
 
 import generate_face_order
@@ -27,7 +31,7 @@ import poly_point_isect
 import sqlite3
 
 debug = False
-depth_bound = 4
+depth_bound = 1
 
 
 # https://stackoverflow.com/questions/10035752/elegant-python-code-for-integer-partitioning
@@ -855,7 +859,7 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, compactness, con
         if conn is not None:
             sql_create_table = """CREATE TABLE IF NOT EXISTS {0} (
                                                                 node_name text PRIMARY KEY,
-                                                                _count integer
+                                                                _count REAL
                                                             ); """.format("nodes_" + str(i))
             cur.execute(sql_create_table)
             conn.commit()
@@ -1096,7 +1100,9 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, compactness, con
                                                     FOREIGN KEY (start_node) REFERENCES {1} (node_name),
                                                     FOREIGN KEY (end_node) REFERENCES {2} (node_name)
                                                 ); """.format("map_"+str(i-1), "nodes_"+str(i-1), "nodes_"+str(i))
+            sql_create_index = """CREATE INDEX end_node_index_{0} ON {1}(end_node)""".format(str(i-1),"map_"+str(i-1))
             cur.execute(sql_create_table)
+            cur.execute(sql_create_index)
             conn.commit()
             sql_insert = "INSERT INTO {0}(start_node,end_node) VALUES(?,?)".format("map_" + str(i-1))
             # for s in range(len(path_map)):
@@ -1307,13 +1313,21 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         #     g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
         # Explode the geometries
         gdf = gpd.read_file(shapefile, encoding='UTF-8')
-        # cbg_map = pd.read_csv("data/wi_cong_dist/Governor's LC Congressional.csv", sep=',').to_numpy()
-        # cbg_map = {str(x[0])[:-3]: x[1] for x in cbg_map}
-        # gdf['CDISTRICT'] = list(map(lambda x: cbg_map[x], gdf['GEOID20']))
-        # gdf = gdf[[x in {4,5} for x in gdf["CDISTRICT"]]]  # 1,4,5
+        cbg_map = pd.read_csv("data/wi_cong_dist/Governor's LC Congressional.csv", sep=',').to_numpy()
+        cbg_map = {str(x[0])[:-3]: x[1] for x in cbg_map}
+        gdf['CDISTRICT'] = list(map(lambda x: cbg_map[x], gdf['GEOID20']))
+        # input data did not have contiguous districts; fill in holes for the districts used in this experiment 
+        holes_geoids =  ['550279613001',
+             '550279613003',
+             '550279613004',
+             '550279613005',
+             '550279613002',
+             '550279601002']
+        gdf.loc[gdf['GEOID20'].isin(holes_geoids), 'CDISTRICT'] = 5 
+        gdf = gdf[[x in {4,5} for x in gdf["CDISTRICT"]]]  # 1,4,5
         # dissolve into higher level
-        # gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
-        gdf = gdf.dissolve(by="COUNTY", aggfunc="sum")
+        gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
+        #gdf = gdf.dissolve(by="COUNTY", aggfunc="sum")
         gdf = gdf.reset_index()
         gdf = gdf.explode(ignore_index=True)
         gdf = gdf.reset_index()
@@ -1420,12 +1434,12 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     # start the algorithm!
     # exit_edge = (308, 306)
     # start_edge = (308, 306)
-    # exit_edge = (415, 417)
-    # start_edge = (415, 417)
+    exit_edge = (415, 417)
+    start_edge = (415, 417)
     # exit_edge = (147, 142)
     # start_edge = (147, 142)
-    exit_edge = (6, 48)
-    start_edge = (14, 37)
+    #exit_edge = (6, 48)
+    #start_edge = (14, 37)
     # exit_edge = (11,12)
     # start_edge = (12,13)
     # outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
@@ -1435,8 +1449,8 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
     k = 2
-    compactness = 15
-    num_samples = 100
+    compactness = 150
+    num_samples = 1000
     cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, compactness, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
@@ -1456,7 +1470,7 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
             # print("Refusing a population {1} standard deviation of {0}".format(np.std(sums), sums))
             continue
         print("Found a good partition {0} with std {1}".format(sums, np.std(sums)))
-        draw_maps(comps, edges, new_map, loc_df, positions, draw3=True)
+        draw_maps(comps, edges, new_map, loc_df, positions, counter=len(pops), draw3=True)
         # sum1 = 0
         # sum2 = 0
         # efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
@@ -2063,7 +2077,7 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
     g = generate_face_order.remove_planar_edges(g, edges)
     # g.remove_edges_from(edges)
     comps = list(nx.connected_components(g))
-    draw_maps(comps, edges, g, loc_df, positions, draw2, draw3)
+    #draw_maps(comps, edges, g, loc_df, positions,counter=0, draw2, draw3)
     if len(comps) != k:
         print(path) if debug else ""
         print("Produced {0} components".format(len(comps))) if debug else ""
@@ -2071,7 +2085,7 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
     return len(edges), comps, edges, g
 
 
-def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
+def draw_maps(comps, edges, g, loc_df, positions, counter, draw2=False, draw3=False):
     if draw2:
         plt.figure(figsize=(18, 18))
         nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
@@ -2086,8 +2100,10 @@ def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
         # print(loc_df['NEW_DISTRICT'])
         fig, ax = plt.subplots()
         loc_df.plot(column='NEW_DISTRICT', ax=ax, cmap="viridis")
-        # plt.savefig()
-        plt.show()
+        loc_df[['NEW_DISTRICT','geometry','POP100','TRACT']].to_file(f'./samples/mke2_map{counter}.shp')	
+        ax.figure.savefig(f'./samples/mke2_map{counter}.png')
+        plt.savefig()
+        #plt.show()
 
 
 def order_faces(graph, positions, start_edge, exit_edge):
@@ -2508,7 +2524,9 @@ if __name__ == '__main__':
     #
     # gdf = gdf.dissolve(by="TRACT", aggfunc="cust_agg")
     # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False, recalculate=True)
-    enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=True)
+    #enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=True)
+    my_path = 'C://Users//user//Documents//Sampling_alg//code//GerryMand//data//wisc_cbgs//wi_pl2020_bg.shp'
+    enumerate_paths_with_order(my_path, face_order, draw=False, recalculate=True)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
     # out_dict = {}
