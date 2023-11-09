@@ -6,6 +6,16 @@
 # List of dicts?
 # Only main algorithm is bottom up, rest can be top down
 
+# In VS Code, open up a cmd prompt (default is powershell)
+# conda activate GerryMand
+# cd C:\Users\user\Documents\Sampling_alg\code\GerryMand
+# python C:\Users\user\Documents\Sampling_alg\code\GerryMand\non_int_bottom_up.py
+# "C:\Users\user\Documents\Sampling_alg\code\GerryMand\data\neb_cbgs\neb_tracts_pop_sql.db"
+# query sql table: 
+    # .open 'C:\Users\user\Documents\Sampling_alg\code\GerryMand\data\neb_cbgs\neb_tracts_pop_sql.db'
+#  select * from nodes_0;
+#  select * from nodes_0 limit 10;
+# select count(*) from nodes_5;
 import collections
 import copy
 import functools
@@ -19,15 +29,21 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
 import geopandas as gpd
-import pandas
 import pandas as pd
 
 import generate_face_order
 import poly_point_isect
 import sqlite3
 
+#mke_map
+state = 'neb'
+map_name = "neb_map"
+
+just_sample_var = True
+# just_sample_var = False
+
 debug = False
-depth_bound = 4
+depth_bound = 0
 
 
 # https://stackoverflow.com/questions/10035752/elegant-python-code-for-integer-partitioning
@@ -50,7 +66,7 @@ def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, compactness, 
 
     if conn is not None:
         cur = conn.cursor()
-        # count
+        # count6
         if not just_sample:
             # base count
             # cur.execute("UPDATE nodes_{0} set _count=1 WHERE node_name='{1}';".format(len(table)-1, '.' + str(num_states-1)))
@@ -855,7 +871,7 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, compactness, con
         if conn is not None:
             sql_create_table = """CREATE TABLE IF NOT EXISTS {0} (
                                                                 node_name text PRIMARY KEY,
-                                                                _count integer
+                                                                _count REAL
                                                             ); """.format("nodes_" + str(i))
             cur.execute(sql_create_table)
             conn.commit()
@@ -1096,7 +1112,9 @@ def allocate_table(face_list, outer_boundary, cont_sections, k, compactness, con
                                                     FOREIGN KEY (start_node) REFERENCES {1} (node_name),
                                                     FOREIGN KEY (end_node) REFERENCES {2} (node_name)
                                                 ); """.format("map_"+str(i-1), "nodes_"+str(i-1), "nodes_"+str(i))
+            sql_create_index = """CREATE INDEX end_node_index_{0} ON {1}(end_node)""".format(str(i-1),"map_"+str(i-1))
             cur.execute(sql_create_table)
+            cur.execute(sql_create_index)
             conn.commit()
             sql_insert = "INSERT INTO {0}(start_node,end_node) VALUES(?,?)".format("map_" + str(i-1))
             # for s in range(len(path_map)):
@@ -1291,7 +1309,7 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     print(order_faces(g, positions, start_edge, exit_edge))
 
 
-def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=False):
+def enumerate_paths_with_order(shapefile, face_order, state, draw=True, recalculate=False):
     print("Start time: " + str(time.time()))
     root = shapefile[:shapefile.index(".")]
     if os.path.exists(root + ".adjlist") and not recalculate:
@@ -1307,17 +1325,43 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         #     g_data[np_df[i][0]].append(np_df[i][1]) if np_df[i][2] > 0.00001 else ""
         # Explode the geometries
         gdf = gpd.read_file(shapefile, encoding='UTF-8')
-        # cbg_map = pd.read_csv("data/wi_cong_dist/Governor's LC Congressional.csv", sep=',').to_numpy()
-        # cbg_map = {str(x[0])[:-3]: x[1] for x in cbg_map}
-        # gdf['CDISTRICT'] = list(map(lambda x: cbg_map[x], gdf['GEOID20']))
-        # gdf = gdf[[x in {4,5} for x in gdf["CDISTRICT"]]]  # 1,4,5
+        gdf = gdf.to_crs(epsg=26851)
+        print("using crs for Nebraska")
+        #cbg_map = pd.read_csv("data/wi_cong_dist/Governor's LC Congressional.csv", sep=',').to_numpy()
+        #cbg_map = {str(x[0])[:-3]: x[1] for x in cbg_map}
+        #gdf['CDISTRICT'] = list(map(lambda x: cbg_map[x], gdf['GEOID20']))
+        # input data did not have contiguous districts; fill in holes for the districts used in this experiment 
+        #holes_geoids =  ['550279613001',
+         #    '550279613003',
+          #   '550279613004',
+           #  '550279613005',
+            # '550279613002',
+             #'550279601002']
+        #gdf.loc[gdf['GEOID20'].isin(holes_geoids), 'CDISTRICT'] = 5 
+        #gdf = gdf[[x in {4,5} for x in gdf["CDISTRICT"]]]  # 1,4,5
         # dissolve into higher level
-        # gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
-        gdf = gdf.dissolve(by="COUNTY", aggfunc="sum")
-        gdf = gdf.reset_index()
-        gdf = gdf.explode(ignore_index=True)
-        gdf = gdf.reset_index()
+        #gdf = gdf.dissolve(by="TRACT", aggfunc="sum")
+        #gdf = gdf.dissolve(by="COUNTY", aggfunc="sum")
+        #gdf = gdf.reset_index()
+        #gdf = gdf.explode(ignore_index=True)
+        #gdf = gdf.reset_index()
         # gdf = gdf.groupby(by='TRACT').first()
+        
+        # Explode MultiPolygons into individual Polygons
+        exploded_gdf = gdf.explode().reset_index()
+        # Calculate the area of the original MultiPolygons
+        original_area = gdf['geometry'].area
+        # Calculate the area of the exploded Polygons
+        exploded_area = exploded_gdf['geometry'].area
+        # Distribute 'pop100' based on the fraction of the area
+        exploded_gdf['POP100'] = (exploded_gdf['POP100'] * (exploded_area / original_area.values)).astype(int)
+        # Modify 'GEOID20' for each part
+        exploded_gdf['GEOID20'] = exploded_gdf['GEOID20'] + '_' + exploded_gdf['level_1'].astype(str)
+        gdf = exploded_gdf.reset_index()
+        # Drop the additional index columns created during explode
+        #exploded_gdf = exploded_gdf.drop(columns=['level_0', 'level_1'])
+
+        
         shapefile = root+"_proc.shp"
         gdf.to_file(shapefile, encoding='UTF-8')
         g_data = adjacency_from_shp(shapefile)
@@ -1416,16 +1460,20 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         print("Error: Adjacency graph is not planar, exiting...")
         exit(0)
     # g.check_structure()
-
+    #nx.draw(g, pos=positions, with_labels=True)
+    #plt.show()
     # start the algorithm!
     # exit_edge = (308, 306)
     # start_edge = (308, 306)
-    # exit_edge = (415, 417)
-    # start_edge = (415, 417)
+    # nebraska
+    exit_edge = (36, 552)
+    start_edge = (36, 552)
+    #exit_edge = (415, 417)
+    #start_edge = (415, 417)
     # exit_edge = (147, 142)
     # start_edge = (147, 142)
-    exit_edge = (6, 48)
-    start_edge = (14, 37)
+    #exit_edge = (6, 48)
+    #start_edge = (14, 37)
     # exit_edge = (11,12)
     # start_edge = (12,13)
     # outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
@@ -1434,29 +1482,56 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     efficiencies = []
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
-    k = 2
-    compactness = 15
-    num_samples = 100
+    k = 3
+    compactness = 100
+    num_samples = 50000
+
     cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, compactness, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
     outer_boundary = [tuple(sorted(x)) for x in outer_boundary]
     clusters = merge_leaves(g_data_og, h2, loc_df)
+
+    pop_dev_perc = 20 # give as percent
+    print(f'Using a pop_dev_perc limit of {pop_dev_perc}')
+    pop_dev_dec = pop_dev_perc/100
+    total_population = loc_df['POP100'].sum()
+    ideal_population = total_population / k
+
+    sampling_counter = 0
     for path in sample_paths:
+        sampling_counter += 1
+        if (sampling_counter%1000 == 0):
+            print(f'sampling_counter = {sampling_counter}')
         ct, comps, edges, new_map = eval_path(path, cont_sections, copy.deepcopy(h2), positions, face_order, outer_boundary, k, loc_df)
         if len(comps) != k:
             continue
         assign_leaves(clusters, comps, g_data_og)
         sums = [0,]*k
         for i in range(len(comps)):
+
             for v in comps[i]:
                 sums[i] += loc_df.loc[v]['POP100']
+
+        # https://github.com/mggg/GerryChain/blob/01b8801877498f87d1b9968415bc7c2439f448c0/gerrychain/constraints/validity.py#L52
+            # - this is how gerrychain calcultes population deviation
+        # Even better if you're feeling it would be to bound the max deviation from the mean (rather than the average deviation which is what .std does) as it is in reality
         # Population count is unrealistic for exploded graphs, so ignore?
-        if np.max(sums) - np.min(sums) > 500000:
+        # By "deviation" we mean ``(actual_value - ideal)/ideal``
+        # if np.max(sums) - np.min(sums) > 100000:
+        max_sum = np.max(sums)
+        min_sum = np.min(sums)
+        def check_pop_dev(m_sum, ideal_population, pop_dev_dec):
+            return abs((m_sum - ideal_population) / ideal_population) > pop_dev_dec
+        # if (abs((max_sum - ideal_population)/ideal_population) > pop_dev_dec) or abs((max_sum - ideal_population)/ideal_population) > pop_dev_dec
             # print("Refusing a population {1} standard deviation of {0}".format(np.std(sums), sums))
+        max_pop_bad = check_pop_dev(max_sum, ideal_population, pop_dev_dec)
+        min_pop_bad = check_pop_dev(min_sum, ideal_population, pop_dev_dec)
+        # could check all of them, but this just checks the two worst
+        if max_pop_bad or min_pop_bad:
             continue
         print("Found a good partition {0} with std {1}".format(sums, np.std(sums)))
-        draw_maps(comps, edges, new_map, loc_df, positions, draw3=True)
+        draw_maps(comps, edges, new_map, loc_df, positions, state, counter=len(pops), draw3=True)
         # sum1 = 0
         # sum2 = 0
         # efficiencies.append(calculate_eff_gap(g1, g2, loc_df, sum1, sum2))
@@ -1491,7 +1566,6 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
     print("Finish time: " + str(time.time()))
     return count
 
-
 def merge_leaves(g_data_og, h2, loc_df):
     removed = [[x] for x in loc_df.index if x not in h2.nodes]
     clusters = list()
@@ -1516,15 +1590,16 @@ def merge_leaves(g_data_og, h2, loc_df):
 def assign_leaves(clusters, comps, g_data_og):
     for cluster in clusters:
         found = False
-        for i in len(comps):
+        for i in range(len(comps)):
             for c in cluster:
-                if any(g_data_og[c] in comps[i]):
-                    comps[i] += cluster
+                if np.any([nb in comps[i] for nb in g_data_og[c]]):
+                    comps[i] = comps[i].union(cluster) # cluster is a list, comps[i] is a set
                     found = True
                     break
             if found:
                 break
-
+    return comps
+    
 
 def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples, compactness, root, recalculate):
     # exit_edge = (71, 74)
@@ -1682,11 +1757,11 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
         fd.close()
     conn = sqlite3.connect(db_name)
     # conn = None
-    table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr, compactness, conn=conn, just_sample=False)
+    table, edge_maps = allocate_table(face_list, start_boundary_list, cont_sections, num_distr, compactness, conn=conn, just_sample=just_sample_var)
     # np.save('saved_table', table)
     # np.save('saved_table', table)
     print("Finished setup: " + str(time.time()))
-    sample_paths, count = count_non_int_paths_w_table(table, edge_maps, num_distr, num_samples, compactness, conn=conn, just_sample=False)
+    sample_paths, count = count_non_int_paths_w_table(table, edge_maps, num_distr, num_samples, compactness, conn=conn, just_sample=just_sample_var)
     conn.close() if conn is not None else ""
     trimmed_sample_paths = list([p[0] for p in sample_paths])
     # for path in sample_paths:
@@ -2063,7 +2138,7 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
     g = generate_face_order.remove_planar_edges(g, edges)
     # g.remove_edges_from(edges)
     comps = list(nx.connected_components(g))
-    draw_maps(comps, edges, g, loc_df, positions, draw2, draw3)
+    #draw_maps(comps, edges, g, loc_df, positions,counter=0, draw2, draw3)
     if len(comps) != k:
         print(path) if debug else ""
         print("Produced {0} components".format(len(comps))) if debug else ""
@@ -2071,7 +2146,7 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
     return len(edges), comps, edges, g
 
 
-def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
+def draw_maps(comps, edges, g, loc_df, positions, state, counter, draw2=False, draw3=False):
     if draw2:
         plt.figure(figsize=(18, 18))
         nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
@@ -2086,8 +2161,10 @@ def draw_maps(comps, edges, g, loc_df, positions, draw2=False, draw3=False):
         # print(loc_df['NEW_DISTRICT'])
         fig, ax = plt.subplots()
         loc_df.plot(column='NEW_DISTRICT', ax=ax, cmap="viridis")
-        # plt.savefig()
-        plt.show()
+        loc_df[['NEW_DISTRICT','geometry','POP100','TRACT']].to_file(f'./{state}_samples/{map_name}{counter}.shp')	#mke2_map
+        ax.figure.savefig(f'./{state}_samples/{map_name}_{counter}.png')
+        plt.savefig(fname = f'./neb_samples_100c_50000s_20popDev/{map_name}_{counter}.png')
+        #plt.show()
 
 
 def order_faces(graph, positions, start_edge, exit_edge):
@@ -2406,7 +2483,9 @@ def test():
 def adjacency_from_shp(shapefile):
     # open file
     gdf = gpd.read_file(shapefile)
-    gdf = gdf.to_crs(crs=3857)  # Distance calculation is done in meters
+    #gdf = gdf.to_crs(crs=3857)  # Distance calculation is done in meters
+    # Reproject to NAD83 / Nebraska (ftUS) North Zone
+    gdf = gdf.to_crs(epsg=26851)
     g_data = collections.defaultdict(list)
     for index, precinct in gdf.iterrows():
         # get 'not disjoint' countries
@@ -2508,7 +2587,9 @@ if __name__ == '__main__':
     #
     # gdf = gdf.dissolve(by="TRACT", aggfunc="cust_agg")
     # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False, recalculate=True)
-    enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=True)
+    #enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=True)
+    my_path = 'C://Users//user//Documents//Sampling_alg//code//GerryMand//data//neb_cbgs//neb_tracts_pop_colFixed.shp'
+    enumerate_paths_with_order(my_path, face_order, state, draw=False, recalculate=True)
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
     # out_dict = {}
