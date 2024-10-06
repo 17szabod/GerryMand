@@ -36,6 +36,17 @@ depth_bound = 1
 
 # https://stackoverflow.com/questions/10035752/elegant-python-code-for-integer-partitioning
 def partition(number, p_count):
+    """
+        Partition a given integer into a specified number of parts.
+
+        Parameters:
+        number (int): The integer to be partitioned.
+        p_count (int): The number of parts to partition the integer into.
+
+        Returns:
+        set: A set of tuples, each representing a unique partition where
+             the sum of the tuple elements equals 'number' and the length of the tuple is 'p_count'.
+        """
     answer = set()
     if p_count == 1:
         answer.add((number,))
@@ -47,6 +58,23 @@ def partition(number, p_count):
 
 
 def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, compactness, conn=None, just_sample=False):
+    """
+        Count and sample non-intersecting paths in a state-space using a given table and edge maps.
+
+        Parameters:
+        table (list): A table containing node counts or weights at each step in the path.
+        edge_dicts (list): A list of edge dictionaries for each state, describing connections between nodes.
+        k (int): The number of partitions or states in the problem.
+        num_samples (int): The number of paths to sample.
+        compactness (int): A parameter controlling path compactness, restricting path lengths.
+        conn (sqlite3.Connection, optional): A database connection for updating counts (if provided).
+        just_sample (bool, optional): A flag to indicate if only sampling is required (default is False).
+
+        Returns:
+        tuple: A tuple containing:
+            - sample_paths (list): A list of sampled paths, with each path represented as a dictionary.
+            - table[0][0][''] (int): The final count of non-intersecting paths, if `conn` is None.
+        """
     num_states = 2*(k-1) + 1
     # Sample top down:
     # sample paths are of the form (0:path, 1:end_state, 2: length)
@@ -152,6 +180,19 @@ def count_non_int_paths_w_table(table, edge_dicts, k, num_samples, compactness, 
 
 # @profile
 def count_non_int_paths(face_list, outer_boundary, cont_sections, k):
+    """
+        This function counts non-intersecting paths through a set of face sections.
+
+        Parameters:
+            face_list (list): The list of faces representing the regions on the surface.
+            outer_boundary (list): The outer boundary representing edges on the perimeter.
+            cont_sections (list): The continuous sections of the faces.
+            k (int): The maximum number of boundary states that can be sampled.
+
+        Returns:
+            count, paths (tuple): returns a tuple containing the final count, as well as any paths that were sampled
+            along the way.
+        """
     # Loop through reversed cont_sections - keep track of cur_sect and prev_sect
     # Generate and loop through each motzkin path of cur_sect and find connected path in prev_sect
     # Add the values of each of cur_sect path's neighbors from prev_sect to its value
@@ -533,6 +574,20 @@ def sample_from_tree(cur_dict, sample_paths, sample_tree, overhead):
 
 # Returns a sampled path of length cur_ind modulo tree size cutoff
 def sample_one(sample_path, sample_tree, cur_ind, path_k):
+    """
+        Sample a path recursively based on the provided tree structure.
+
+        Parameters:
+        - sample_path (list): The current sampled path, represented as a list of elements.
+        - sample_tree (list): A hierarchical structure that organizes potential paths based on layers and states.
+        - cur_ind (int): The current index representing the position in the sampled path.
+        - path_k (int): An identifier for the current path state or layer in the sample_tree.
+
+        Returns:
+        - tuple: A tuple containing the updated sample_path (list) and the updated path_k (int),
+                 or None if the path cannot be salvaged or continued.
+
+        """
     layer = sample_tree[path_k][cur_ind]
     if sample_path[-1] not in layer:  # Try to take a step back and salvage it?
         if cur_ind > 0:
@@ -574,6 +629,17 @@ def sample_one(sample_path, sample_tree, cur_ind, path_k):
 
 
 def create_labellings_multisection(cur_dict, cur_sect, flat_outer):
+    """
+        Generates and updates path labelings based on section partitions and Motzkin paths.
+
+        Parameters:
+        - cur_dict (dict): A dictionary that will be updated with the new labelings.
+        - cur_sect (list): The current section that the labelings are being generated for.
+        - flat_outer (bool): A flag indicating whether the outer boundary should be treated as flat.
+
+        Returns:
+        - Updates cur_dict in place with the newly generated path labelings.
+        """
     for tup in partition(depth_bound, len(cur_sect)):  # Loop through all ordered partitions for the depth bound
         temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
         temp_dict[''] = 0
@@ -615,6 +681,17 @@ def create_labellings_multisection(cur_dict, cur_sect, flat_outer):
 
 # Generates all possible Motzkin labellings for a boundary with cur_state=k
 def create_labellings_one_section(cur_dict, cur_sect, k):
+    """
+        Generates Motzkin path labelings for a specific section and boundary state k.
+
+        Parameters:
+        - cur_dict (dict): The dictionary that stores the generated labelings.
+        - cur_sect (list): The section of the boundary for which labelings are being created.
+        - k (int): The current state or boundary condition which affects the generation of labelings.
+
+        Returns:
+        - Updates cur_dict in place with the generated labelings.
+        """
     temp_dict = collections.defaultdict()  # Need a separate dictionary for each loop...
     temp_dict[''] = 0
     # for section_ind in range(len(cur_sect)):
@@ -670,6 +747,18 @@ def find_motzkin_paths(h, w, n, m_dict, depth, num_ones):
 
 
 def count_non_int_paths_unrestr(face_list, start_edge, outer_boundary, cont_sections):
+    """
+        Counts non-intersecting paths through a polygonal face list with an unrestricted Motzkin path generation strategy.
+
+        Parameters:
+        - face_list (list of tuples): List of faces that make up the shape, where each face is represented by a tuple of edges.
+        - start_edge (tuple): The edge where the path begins, used as the starting reference for boundary sections.
+        - outer_boundary (list of tuples): The outer boundary of the face structure, represented by sorted pairs of vertices.
+        - cont_sections (list of lists): The sections or continuous boundary segments through which the paths are formed.
+
+        Returns:
+        - int: The count of valid non-intersecting paths from the start to the end of the face list, adhering to Motzkin path rules.
+    """
     # Loop through reversed cont_sections - keep track of cur_sect and prev_sect
     # Generate and loop through each motzkin path of cur_sect and find connected path in prev_sect
     # Add the values of each of cur_sect path's neighbors from prev_sect to it's value
@@ -813,6 +902,12 @@ def count_non_int_paths_unrestr(face_list, start_edge, outer_boundary, cont_sect
 
 
 # https://doi.org/10.1016/j.tcs.2020.12.013
+# Returns _every_ possible Motzkin path with length n, prefix w, height h.
+# @param h: The current height of the path
+# @param w: The current prefix word
+# @param n: The total length of the path
+# @param m_dict: The dictionary holding the output paths
+# @param num_ones: The number of ones the path must have
 def find_motzkin_paths_unrestr(h, w, n, m_dict):
     j = len(w)
     if h > n - j:
@@ -831,6 +926,22 @@ def find_motzkin_paths_unrestr(h, w, n, m_dict):
 
 
 def allocate_table(face_list, outer_boundary, cont_sections, k, compactness, conn: sqlite3.Connection=None, just_sample=False):
+    """
+        Parameters:
+        - face_list (list): List of faces representing boundaries between sections.
+        - outer_boundary (list): List of tuples representing the outer boundary edges.
+        - cont_sections (list): Contiguous sections for which Motzkin paths will be generated.
+        - k (int): Number of total sections or states in the problem.
+        - compactness (int): A parameter affecting the length of paths and their transitions.
+        - conn (sqlite3.Connection, optional): A SQLite connection object for storing results in a database.
+        - just_sample (bool): If True, samples a subset from existing tables, returning a structure and None.
+
+        Input:
+        - Generates Motzkin paths, inserts paths into a SQLite table (if conn is provided), and calculates edge relations.
+
+        Output:
+        - Returns a table of paths (big_table) and edge_maps that describe transitions between path states across layers.
+        """
     if just_sample:  # conn must then not be None
         cur = conn.cursor()
         cur.execute("select * from sqlite_master where type='table' and tbl_name like 'nodes_%';")
@@ -1155,6 +1266,16 @@ def ensure_cw(face, positions):
 
 # Order and orient each face within face_order in place by traversing each face in g
 def orient_faces(face_order, g, positions, start_edge):
+    """
+        Parameters:
+        - face_order (list): A list of faces (each face is a list of vertices) that need to be ordered and oriented.
+        - g (Graph): A graph data structure with methods for traversing and checking face connectivity.
+        - positions (dict): A dictionary that maps each vertex to its position, used to ensure proper face orientation.
+        - start_edge (tuple): A starting edge to orient the first face.
+
+        Output:
+        - Returns the reordered and reoriented list of faces (face_order).
+        """
     for i in range(len(face_order)):
         f = face_order[i]
         done = False
@@ -1297,7 +1418,31 @@ def enumerate_paths(adj_file, shapefile, recalculate=False, draw=True):
     print(order_faces(g, positions, start_edge, exit_edge))
 
 
-def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=False):
+###################################################################################################################
+# KEY METHOD TO RUN AND EDIT
+###################################################################################################################
+def enumerate_paths_with_order(shapefile, face_order, k, compactness, num_samples, exit_edge, start_edge, draw=True, recalculate=False):
+    """
+    Reads and processes a shapefile to generate a planar adjacency graph, and samples paths along faces defined in the face order.
+        Parameters:
+        - shapefile (str): Path to the shapefile for the input data.
+        - face_order (list): A list of faces to be processed in a particular order.
+        - draw (bool): Whether to visualize the paths (default: True).
+        - recalculate (bool): Flag to indicate if the adjacency graph needs to be recalculated (default: False).
+
+        Steps:
+        1. If the adjacency graph already exists (cached), it is loaded. Otherwise, the shapefile is processed to generate the adjacency data.
+        2. Uses the NetworkX package to verify planarity and layout positions for the graph.
+        3. Additional data processing on the shapefile ensures proper geometric continuity, fills any district gaps, and recalculates the adjacency graph if needed.
+        4. Vertices with degree 1 are iteratively removed to clean up the graph.
+        5. If the graph isn't planar, edges causing planarity issues are removed to ensure planarity.
+        6. Samples paths based on the face order and calculates metrics like compactness and path efficiency for each path.
+        7. Evaluates population distribution and geographic partitions of the resulting paths.
+        8. Draws maps and prints metrics for sampled partitions.
+
+        Output:
+        - Returns a count of valid sampled paths and partitions based on compactness, population equality, and other factors.
+        """
     print("Start time: " + str(time.time()))
     root = shapefile[:shapefile.index(".")]
     if os.path.exists(root + ".adjlist") and not recalculate:
@@ -1430,27 +1575,18 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
         print("Error: Adjacency graph is not planar, exiting...")
         exit(0)
     # g.check_structure()
-
+    ###################################################################################################################
+    # KEY PARAMETERS TO EDIT:
+    # exit_edge = (415, 417)
+    # start_edge = (415, 417)
+    ###################################################################################################################
     # start the algorithm!
-    # exit_edge = (308, 306)
-    # start_edge = (308, 306)
-    exit_edge = (415, 417)
-    start_edge = (415, 417)
-    # exit_edge = (147, 142)
-    # start_edge = (147, 142)
-    #exit_edge = (6, 48)
-    #start_edge = (14, 37)
-    # exit_edge = (11,12)
-    # start_edge = (12,13)
     # outer_face = max([g.traverse_face(*exit_edge), g.traverse_face(exit_edge[1], exit_edge[0])],
     #                  key=lambda x: len(x))
     cts = []
     efficiencies = []
     pops = []
     # print("Sampling with start edge {0} and exit edge {1}".format(start_edge, exit_edge))
-    k = 2
-    compactness = 150
-    num_samples = 1000
     cont_sections, count, sample_paths, outer_boundary, h2, face_order = count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, k, num_samples, compactness, root, recalculate)
     if len(sample_paths[-1]) == 0:
         raise Exception("None of the sampled paths survived.")
@@ -1507,6 +1643,15 @@ def enumerate_paths_with_order(shapefile, face_order, draw=True, recalculate=Fal
 
 
 def merge_leaves(g_data_og, h2, loc_df):
+    """
+        Parameters:
+        - g_data_og (dict): Original adjacency data where each vertex is a key and its value is a list of neighboring vertices.
+        - h2 (networkx.Graph): Processed subgraph of the main graph `g_data_og`.
+        - loc_df (GeoDataFrame): DataFrame containing location information for all nodes/vertices, indexed by node ID.
+
+        Output:
+        - Returns `clusters`, a list of lists where each sublist represents a group of merged leaves from `loc_df`.
+        """
     removed = [[x] for x in loc_df.index if x not in h2.nodes]
     clusters = list()
     while len(removed) > 0:
@@ -1528,6 +1673,15 @@ def merge_leaves(g_data_og, h2, loc_df):
 
 
 def assign_leaves(clusters, comps, g_data_og):
+    """
+        Parameters:
+        - clusters (list of lists): Each element in `clusters` is a list representing a group of merged leaves.
+        - comps (list of lists): Each element in `comps` represents a partition of vertices/nodes. The goal is to assign the clusters to these partitions.
+        - g_data_og (dict): Original adjacency data where each vertex is a key and its value is a list of neighboring vertices.
+
+        Output:
+        - The `comps` list is updated in place, with clusters assigned to the appropriate partitions.
+        """
     for cluster in clusters:
         found = False
         for i in len(comps):
@@ -1541,6 +1695,31 @@ def assign_leaves(clusters, comps, g_data_og):
 
 
 def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_distr, num_samples, compactness, root, recalculate):
+    """
+        This function generates face traversals on a planar graph, assigns boundary edges, cleans the graph,
+        and then computes and samples non-self-intersecting paths based on a set number of distributions and samples.
+
+        Parameters:
+        - draw (bool): If True, the function will plot and save visualizations of the graph.
+        - face_order (list): Initial list of face traversals.
+        - g (Graph): The original graph object that contains the nodes and their relationships.
+        - positions (dict): A dictionary mapping nodes to their coordinates on the plane.
+        - exit_edge (tuple): The edge that forms the outer boundary for traversal.
+        - start_edge (tuple): The starting edge for the traversal and face-order generation.
+        - num_distr (int): Number of different distributions for sampling paths.
+        - num_samples (int): Number of samples to take for path counting.
+        - compactness (float): A parameter that influences the sampling process.
+        - root (str): Root path to save output files.
+        - recalculate (bool): If True, recalculates the face order even if saved data exists.
+
+        Returns:
+        - cont_sections (list): Sections of face traversals used for further calculations.
+        - count (int): Number of non-self-intersecting paths counted.
+        - trimmed_sample_paths (list): Sampled paths after trimming based on distribution.
+        - start_boundary_list (list): List of boundary edges used during the traversal process.
+        - h2 (Graph): The cleaned version of the input graph.
+        - face_list (list): List of ordered faces generated during the traversal.
+    """
     # exit_edge = (71, 74)
     # start_edge = (46, 48)
     outer_face_edge = exit_edge  # The edge where the outer face is cut
@@ -1712,6 +1891,32 @@ def count_and_sample(draw, face_order, g, positions, exit_edge, start_edge, num_
 
 
 def create_face_order(start_edge, face_order, positions, start_boundary_list, g, geom_dict):
+    # def create_face_order(
+    #         start_edge: Tuple[int, int],
+    #         face_order: List[List[int]],
+    #         positions: List[Tuple[float, float]],
+    #         start_boundary_list: List[Tuple[int, int]],
+    #         g: Dict[int, List[int]],
+    #         geom_dict: Dict[int, Any],
+    #         debug: bool = False
+    # ) -> Tuple[List[List[List[Tuple[int, int]]]], List[List[int]]]:
+    """
+    Creates an ordered list of faces while ensuring continuous boundaries.
+
+    Parameters:
+    - start_edge: The starting edge to initiate the traversal.
+    - face_order: A list of faces to be processed in order.
+    - positions: A list of position tuples for vertices.
+    - start_boundary_list: The initial boundary to begin with.
+    - g: A graph representation of edges.
+    - geom_dict: A dictionary of geometric attributes for vertices.
+    - debug: A boolean to control debug output.
+
+    Returns:
+    A tuple containing:
+    - cont_sections: A list of contiguous sections, each section being a list of edges.
+    - face_list: A list of processed faces.
+    """
     # Ensure that face_list results in a continuous boundary
     # Iterate through face_list keeping track of contiguous boundary sets
     # Store the contiguous sections as a list (each frontier) of lists (each connected component) of lists (frontiers)
@@ -1942,6 +2147,28 @@ def create_face_order(start_edge, face_order, positions, start_boundary_list, g,
 
 
 def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_boundary_labels, start_boundary_list, start_edge, geom_dict):
+    """
+        Cleans the given graph by removing unnecessary vertices, bad faces, and loops based on specific criteria.
+
+        This function analyzes the edges and faces of a planar graph, identifying and cleaning up
+        vertices involved in self-loops, boundary loops, and faces with duplicate vertices.
+        It also manages the connectivity of boundaries, cutting off "ears" that do not connect to
+        specified edges. The cleaned data is then returned, including an updated list of boundary
+        edges and a subgraph consisting of remaining vertices.
+
+        Parameters:
+            exit_edge (tuple): The edge indicating the exit from the graph.
+            face_dict (dict): A dictionary that maps string representations of faces to the list of vertices forming them.
+            g (nx.PlanarEmbedding): The planar graph being cleaned.
+            positions (dict): A mapping of vertices to their positions in space.
+            start_boundary_labels (list): A list of labels corresponding to the boundary edges.
+            start_boundary_list (list): A list of boundary edges in the graph.
+            start_edge (tuple): The starting edge of interest.
+            geom_dict (dict): A dictionary containing geometric properties related to the graph.
+
+        Returns:
+            tuple: An updated list of boundary edges and a subgraph of the cleaned vertices.
+        """
     # Some faces have self loops, we can remove the inner loops and all vertices within
     verts_to_clean = set()
     points_to_keep = set()
@@ -2030,6 +2257,20 @@ def clean_graph(exit_edge, face_dict, g: nx.PlanarEmbedding, positions, start_bo
 
 
 def calculate_eff_gap(g1, g2, loc_df, sum1, sum2):
+    """
+        Calculates the efficiency gap between two electoral districts based on vote distribution.
+
+        Parameters:
+            g1 (iterable): The first electoral district graph.
+            g2 (iterable): The second electoral district graph.
+            loc_df (DataFrame): A DataFrame containing voter demographics, including party affiliation and
+                                total number of persons.
+            sum1 (int): The total number of votes in the first district.
+            sum2 (int): The total number of votes in the second district.
+
+        Returns:
+            float: The calculated efficiency gap between the two districts.
+        """
     repct1 = 0
     repct2 = 0
     demct1 = 0
@@ -2053,6 +2294,30 @@ def calculate_eff_gap(g1, g2, loc_df, sum1, sum2):
 
 
 def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_df, draw2=False, draw3=False):
+    """
+        Evaluates a given path in a planar graph and calculates the resulting edges and connected components.
+
+        Parameters:
+            path (list): A sequence representing the path to evaluate, containing binary values indicating the
+                         sections selected at each step.
+            cont_sections (list): A list of sections corresponding to the path, where each section can contain
+                                  multiple sub-sections.
+            g (networkx.Graph): The graph to evaluate, which may undergo modifications based on the path.
+            positions (dict): A dictionary containing the positions of nodes in the graph for visualization.
+            face_list (list): A list of faces corresponding to the graph, used to identify exit edges.
+            outer_face (set): A set of edges representing the outer boundary of the graph.
+            k (int): The expected number of connected components after processing the path.
+            loc_df (DataFrame): A DataFrame containing location-related data for visualization purposes.
+            draw2 (bool, optional): Flag indicating whether to draw the second map. Default is False.
+            draw3 (bool, optional): Flag indicating whether to draw the third map. Default is False.
+
+        Returns:
+            tuple: A tuple containing:
+                - int: The number of edges evaluated.
+                - list: The connected components of the modified graph.
+                - set: The set of edges corresponding to the evaluated path.
+                - networkx.Graph: The modified graph after edge removal.
+        """
     edges = set()
     outer_edges = set(outer_face)
     prev_ones = 0
@@ -2086,6 +2351,22 @@ def eval_path(path, cont_sections, g, positions, face_list, outer_face, k, loc_d
 
 
 def draw_maps(comps, edges, g, loc_df, positions, counter, draw2=False, draw3=False):
+    """
+        Visualizes a graph and its connected components based on specified parameters.
+
+        Parameters:
+            comps (list): A list of connected components derived from the graph, each representing a distinct group of nodes.
+            edges (set): A set of edges in the graph that may be highlighted in the visualization.
+            g (networkx.Graph): The graph to visualize.
+            loc_df (GeoDataFrame): A GeoDataFrame containing geographical data, including geometries for mapping.
+            positions (dict): A dictionary specifying the positions of nodes in the graph for plotting.
+            counter (int): An identifier used for naming output files.
+            draw2 (bool, optional): Flag indicating whether to draw the graph visualization (default is False).
+            draw3 (bool, optional): Flag indicating whether to visualize districts based on connected components (default is False).
+
+        Returns:
+            None: This function produces visual outputs and saves them to files but does not return any values.
+        """
     if draw2:
         plt.figure(figsize=(18, 18))
         nx.draw(g, pos=positions, node_size=60, with_labels=True, font_size=12, font_color='red', linewidths=0,
@@ -2107,6 +2388,18 @@ def draw_maps(comps, edges, g, loc_df, positions, counter, draw2=False, draw3=Fa
 
 
 def order_faces(graph, positions, start_edge, exit_edge):
+    """
+        Orders the faces of a graph based on traversal from a specified start edge to an exit edge.
+
+        Parameters:
+            graph (networkx.Graph): The input graph containing vertices and edges representing the faces.
+            positions (dict): A dictionary mapping each vertex to its (x, y) coordinates for traversal.
+            start_edge (tuple): The edge from which to start the traversal, defined as a tuple of two vertices.
+            exit_edge (tuple): The edge that marks the exit point of the traversal, defined as a tuple of two vertices.
+
+        Returns:
+            int: The count of non-self-intersecting paths through the ordered faces.
+        """
     # Construct boundaries
     outer_face = max([graph.traverse_face(*exit_edge), graph.traverse_face(exit_edge[1], exit_edge[0])],
                      key=lambda x: len(x))
@@ -2438,6 +2731,16 @@ def adjacency_from_shp(shapefile):
 # Makes an input graph planar by finding all intersection points of edges, and deleting one of the intersecting edges
 # Uses an implementation of Bentley-Ottmann from https://github.com/ideasman42/isect_segments-bentley_ottmann
 def find_intersecting_edges(g, positions):
+    """
+        Identifies and removes intersecting edges from a graph to ensure planarity.
+
+        Parameters:
+            g (networkx.Graph): The input graph containing edges to be analyzed for intersections.
+            positions (dict): A dictionary mapping each vertex to its (x, y) coordinates, which define the edges.
+
+        Returns:
+            list: A list of tuples representing the intersecting edges that need to be added to the graph.
+        """
     points = []
     for e in g.edges:
         if (tuple(positions[e[1]]), tuple(positions[e[0]])) not in points:
@@ -2476,6 +2779,7 @@ if __name__ == '__main__':
     # find_motzkin_paths(0, '', 5, my_dict, 0, True)
     # print(my_dict)
     # exit(0)
+    # There is no need to modify this face order, unless generate_face_order.py is used separately
     face_order = [[46, 48, 130], [46, 130, 48, 128, 40], [46, 116, 47, 50], [46, 47, 116], [46, 117, 47], [46, 40, 117],
                   [117, 40, 47], [128, 41, 40], [41, 131, 47, 40], [131, 52, 50, 47], [50, 52, 51], [51, 52, 106],
                   [52, 13, 106], [11, 13, 52, 22], [11, 22, 12], [22, 52, 23], [23, 52, 21], [21, 52, 131, 97],
@@ -2525,8 +2829,16 @@ if __name__ == '__main__':
     # gdf = gdf.dissolve(by="TRACT", aggfunc="cust_agg")
     # enumerate_paths_with_order("data/exp2627wards.shp", face_order, draw=False, recalculate=True)
     #enumerate_paths_with_order("data/wi_cbgs/wi_pl2020_bg.shp", face_order, draw=False, recalculate=True)
+    ###################################################################################################################
+    # MODIFY THIS PATH TO APPROPRIATE INPUT
     my_path = 'C://Users//user//Documents//Sampling_alg//code//GerryMand//data//wisc_cbgs//wi_pl2020_bg.shp'
-    enumerate_paths_with_order(my_path, face_order, draw=False, recalculate=True)
+    k = 2
+    compactness = 150
+    num_samples = 1000
+    exit_edge = (415, 417)
+    start_edge = (415, 417)
+    enumerate_paths_with_order(my_path, face_order, k, compactness, num_samples, exit_edge, start_edge, draw=False, recalculate=True)
+    ###################################################################################################################
     # enumerate_paths("data/exp2627neighb.dbf", "data/exp2627wards.shp")
     # test()
     # out_dict = {}
